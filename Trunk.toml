@@ -1,0 +1,10 @@
+[build]
+filehash = false
+[[proxy]]
+rewrite = "/api"
+backend = "http://127.0.0.1:8085/api"
+# backend = "http://192.168.111.1/api"
+[[proxy]]
+rewrite = "/files"
+# backend = "http://192.168.111.1/files"
+backend = "http://127.0.0.1:8085/files"

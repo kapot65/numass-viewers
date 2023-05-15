@@ -1,0 +1,52 @@
+[package]
+name = "viewers"
+version = "0.1.0"
+authors = ["Vasily Chernov <kapot65@gmail.com>"]
+edition = "2021"
+rust-version = "1.65"
+
+[dependencies]
+egui = "0.21.0"
+egui_extras = { version =  "0.21.0", features = ["image"]}
+eframe = { version = "0.21.0" }
+
+serde = { version = "1.0.152", features = ["derive"] }
+serde_json = "1.0.91"
+serde_qs = "0.11.0"
+rmp-serde = "1.1.1"
+
+tracing = "0.1.37"
+
+backend = { path = "../numass-server" }
+# processing = { git = "https://bitbucket.org/Kapot/numass-processing.git", tag = "0.1.3" }
+processing = { path = "../numass-processing" }
+
+protobuf = "3.2.0"
+
+chrono = "0.4.23"
+natord = "1.0.9"
+
+
+# native:
+[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
+tracing-subscriber = "0.3"
+
+tokio = { version = "1.21.2", features = ["full"] }
+dataforge = { git = "https://bitbucket.org/Kapot/dataforge-parser-rust.git", tag = "0.1.3", features = ["tokio"]  }
+
+rfd = "0.11.1"
+home = "0.5.4"
+which = "4.4.0"
+
+clap = "4.1.4"
+
+# web:
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+tracing-wasm = "0.2"
+console_error_panic_hook = "0.1.6"
+
+wasm-bindgen = "0.2.84"
+wasm-bindgen-futures = "0.4"
+gloo-net = "0.2.6"
+
+dataforge = { git = "https://bitbucket.org/Kapot/dataforge-parser-rust.git", tag = "0.1.3"  }
