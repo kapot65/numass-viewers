@@ -3,12 +3,11 @@ use std::{sync::Arc, path::PathBuf};
 use egui::mutex::Mutex;
 use processing::point_to_chunks;
 
-use crate::{app::color_same_as_egui, load_point};
+use crate::{color_same_as_egui, load_point};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
     tokio::spawn,
-    home::home_dir,
 };
 
 #[cfg(target_arch = "wasm32")]

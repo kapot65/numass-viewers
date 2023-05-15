@@ -2,7 +2,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use eframe::epaint::{Color32, Hsva};
+use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Line, Plot, Points}}};
+
+use processing::{ProcessingParams, numass::{NumassMeta, Reply}};
+use backend::{FSRepr, FileCache};
+use crate::{color_same_as_egui, algorithm_editor, post_processing_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -24,23 +28,6 @@ use {
 #[wasm_bindgen]
 extern "C" {
     fn download(filename: &str, text: &str);
-}
-
-use eframe::egui::plot::{Legend, Line, Plot};
-use eframe::egui::{self, Ui};
-
-use egui::mutex::Mutex;
-use egui::plot::Points;
-use processing::{ProcessingParams, numass::{NumassMeta, Reply}};
-
-use backend::{FSRepr, FileCache};
-
-use crate::{algorithm_editor, post_processing_editor, histogram_params_editor};
-
-pub fn color_same_as_egui(idx: usize) -> Color32 {
-    let golden_ratio = (5.0_f32.sqrt() - 1.0) / 2.0; // 0.61803398875
-    let h = idx as f32 * golden_ratio;
-    Hsva::new(h, 0.85, 0.5, 1.0).into() // TODO(emilk): OkLab or some other perspective color space
 }
 
 #[derive(PartialEq, Clone, Copy)]

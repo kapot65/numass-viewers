@@ -2,7 +2,7 @@
 
 use std::path::PathBuf;
 
-use egui::Ui;
+use egui::{Ui, Color32, epaint::Hsva};
 use protobuf::Message;
 
 use processing::{histogram::HistogramParams, PostProcessingParams, Algorithm, numass::protos::rsb_event};
@@ -29,6 +29,12 @@ pub mod app;
 pub mod filtered_viewer;
 pub mod point_viewer;
 
+
+pub fn color_same_as_egui(idx: usize) -> Color32 {
+    let golden_ratio = (5.0_f32.sqrt() - 1.0) / 2.0; // 0.61803398875
+    let h = idx as f32 * golden_ratio;
+    Hsva::new(h, 0.85, 0.5, 1.0).into()
+}
 
 pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> HistogramParams {
 

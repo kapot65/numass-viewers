@@ -1,10 +1,11 @@
 use std::{ops::Range, path::PathBuf, sync::Arc, collections::BTreeMap, borrow::Borrow};
 
-use crate::{app::color_same_as_egui, algorithm_editor, load_point};
 use egui::{mutex::Mutex, plot::PlotUi};
-use processing::{Algorithm, frame_to_waveform, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events};
 use serde::Serialize;
 use serde_json::json;
+
+use processing::{Algorithm, frame_to_waveform, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events};
+use crate::{color_same_as_egui, algorithm_editor, load_point};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
