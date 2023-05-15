@@ -495,18 +495,16 @@ impl eframe::App for DataViewerApp {
                             }).collect::<Vec<_>>()
                         } else {
                             opened_files.iter().enumerate()
-                            .filter(|(_, (_, cache))| {cache.histogram.is_some()}) // TODO change to filtermap
-                            .map(|(idx, (filepath, cache))| {
-                                let hist = cache.histogram.clone().unwrap();
-
-                                let mut y_all = vec![0.0; hist.x.len()];
-                                for (_, y) in hist.channels {
-                                    for (idx, val) in y.iter().enumerate() {
-                                        y_all[idx] += val;
+                            .filter_map(|(idx, (filepath, cache))| {
+                                cache.histogram.clone().map(|hist| {
+                                    let mut y_all = vec![0.0; hist.x.len()];
+                                    for (_, y) in hist.channels {
+                                        for (idx, val) in y.iter().enumerate() {
+                                            y_all[idx] += val;
+                                        }
                                     }
-                                }
-
-                                (filepath.to_string(), color_same_as_egui(idx), hist.step, hist.x, y_all)
+                                    (filepath.to_string(), color_same_as_egui(idx), hist.step, hist.x, y_all)
+                                })
                             }).collect::<Vec<_>>()
                         };
 

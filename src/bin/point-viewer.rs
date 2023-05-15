@@ -1,7 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    todo!()
+    panic!("this binary is not meant to be run in browser")
 }
 
 #[cfg(not(target_arch = "wasm32"))]
