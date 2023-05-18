@@ -1,11 +1,11 @@
-use std::{ops::Range, path::PathBuf, sync::Arc, collections::BTreeMap, borrow::Borrow};
+use std::{ops::Range, path::PathBuf, sync::Arc, collections::BTreeMap};
 
-use egui::{mutex::Mutex, plot::PlotUi};
+use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
 use serde::Serialize;
 use serde_json::json;
 
-use processing::{Algorithm, frame_to_waveform, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events};
-use crate::{color_same_as_egui, algorithm_editor, load_point};
+use processing::{Algorithm, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine};
+use crate::{algorithm_editor, load_point};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -90,7 +90,7 @@ impl FilteredViewer {
                     for frame in &block.frames {
                         let entry = frames.entry(frame.time).or_default();
                         entry.insert(channel.id as u8, ProcessedChannel { 
-                            waveform: process_waveform(&frame_to_waveform(frame)), 
+                            waveform: process_waveform(frame), 
                             peaks: None
                         });
                     }
@@ -142,7 +142,7 @@ impl FilteredViewer {
                 *indexes.lock() = Some(events.iter().enumerate().filter_map(|(idx, frame)| {
                     let ProcessedDeviceFrame { channels, .. } = frame;
                     if channels.iter().any(|(_ , event)| {
-                        if let Some(peaks) = event.peaks.borrow() {
+                        if let Some(peaks) = event.peaks.as_ref() {
                             peaks.iter().any(|[_, amp]| {
                                 range.contains(&(*amp as f32))
                             })
@@ -162,27 +162,23 @@ impl FilteredViewer {
     fn plot_processed_frame(plot_ui: &mut PlotUi, event: BTreeMap<u8, ProcessedChannel>, secondary: bool, offset: i64) {
         for (ch_id, processed) in event {
             let ProcessedChannel { waveform, peaks } = processed;
-            plot_ui.line(
-                eframe::egui::plot::Line::new(
-                    waveform.0
-                        .iter()
-                        .enumerate()
-                        .map(|(x, y)| [(x as i64 + offset) as f64, (*y as f64)])
-                        .collect::<Vec<_>>(),
-                )
-                .width(if secondary {1.0} else {3.0})
-                .color(color_same_as_egui(ch_id as usize))
-                .name(format!("ch# {}", ch_id + 1)),
-            );
 
+            waveform.draw_egui(
+                plot_ui, 
+                Some(&format!("ch# {}", ch_id + 1)), 
+                Some(color_for_index(ch_id as usize)), 
+                Some(if secondary {1.0} else {3.0}), 
+                Some(offset)
+            );
+        
             if !secondary {
                 if let Some(peaks) = peaks {
-                    plot_ui.points(eframe::egui::plot::Points::new(
+                    plot_ui.points(Points::new(
                         peaks
-                        ).shape(egui::plot::MarkerShape::Diamond)
+                        ).shape(MarkerShape::Diamond)
                         .filled(false)
                         .radius(10.0)
-                        .color(color_same_as_egui(ch_id as usize))
+                        .color(color_for_index(ch_id as usize))
                     )
                 }
             }

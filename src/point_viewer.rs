@@ -1,19 +1,15 @@
 use std::{sync::Arc, path::PathBuf};
 
 use egui::mutex::Mutex;
-use processing::point_to_chunks;
+use processing::{point_to_chunks, color_for_index, ProcessedWaveform, EguiLine};
 
-use crate::{color_same_as_egui, load_point};
+use crate::load_point;
 
 #[cfg(not(target_arch = "wasm32"))]
-use {
-    tokio::spawn,
-};
+use tokio::spawn;
 
 #[cfg(target_arch = "wasm32")]
-use {
-    wasm_bindgen_futures::spawn_local as spawn,
-};
+use wasm_bindgen_futures::spawn_local as spawn;
 
 #[derive(Debug, Clone)]
 enum AppState {
@@ -22,8 +18,10 @@ enum AppState {
     Interactive
 }
 
+type Chunk = Vec<(u8, ProcessedWaveform)>;
+
 pub struct PointViewer {
-    chunks: Arc<Mutex<Option<Vec<Vec<(u8, Vec<[f64; 2]>)>>>>>,
+    chunks: Arc<Mutex<Option<Vec<Chunk>>>>,
     current_chunk: usize,
     state: Arc<Mutex<AppState>>,
 }
@@ -113,11 +111,14 @@ impl eframe::App for PointViewer {
                             })
                             .x_axis_formatter(|value, _| format!("{value:.3} μs"))
                             .show(ui, |plot_ui| {
-                                for (ch_num, x) in chunks[self.current_chunk].clone() {
-                                    plot_ui.line(
-                                        egui::plot::Line::new(x)
-                                            .color(color_same_as_egui((ch_num) as usize))
-                                            .name(format!("ch #{}", ch_num + 1)),
+
+                                for (ch_num, waveform) in chunks[self.current_chunk].clone() {
+
+                                    waveform.draw_egui(
+                                        plot_ui, 
+                                        Some(&format!("ch #{}", ch_num + 1)), 
+                                        Some(color_for_index((ch_num) as usize)),
+                                         None, None
                                     );
                                 }
                             });

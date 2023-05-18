@@ -2,11 +2,11 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Line, Plot, Points}}};
+use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot, Points}}};
 
 use processing::{ProcessingParams, numass::{NumassMeta, Reply}};
 use backend::{FSRepr, FileCache};
-use crate::{color_same_as_egui, algorithm_editor, post_processing_editor, histogram_params_editor};
+use crate::{algorithm_editor, post_processing_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -46,6 +46,7 @@ struct ProcessingStatus {
 
 pub struct DataViewerApp {
     pub root: Arc<Mutex<Option<FSRepr>>>,
+    select_single: bool,
     plot_mode: PlotMode,
     processing_status: Arc<Mutex<ProcessingStatus>>,
     processing_params: Arc<Mutex<ProcessingParams>>,
@@ -56,6 +57,7 @@ impl DataViewerApp {
     pub fn new() -> Self {
         Self {
             root: Arc::new(Mutex::new(None)),
+            select_single: false,
             state: Arc::new(Mutex::new(BTreeMap::new())),
             processing_status: Arc::new(Mutex::new(ProcessingStatus { 
                 running: false, total: 0, processed: 0 })),
@@ -64,8 +66,10 @@ impl DataViewerApp {
         }
     }
 
-    fn files_editor(&self, ui: &mut Ui) {
+    fn files_editor(&mut self, ui: &mut Ui) {
         let root_lock = self.root.lock().clone();
+
+        ui.checkbox(&mut self.select_single, "select single");
 
         ui.horizontal(|ui| {
             if ui.button("open").clicked() {
@@ -145,7 +149,7 @@ impl DataViewerApp {
 
                             PlotMode::Histogram => {
                                 for (name, cache) in state_sorted.iter() {
-                                    if let Some(histogramm) = &cache.histogram {
+                                    if let Some(histogram) = &cache.histogram {
                                         let point_name = {
                                             let temp = PathBuf::from(name);
                                             temp.file_name().unwrap().to_owned()
@@ -155,7 +159,7 @@ impl DataViewerApp {
                                         {
                                             let mut row = String::new();
                                             row.push_str("bin\t");
-                                            for ch_num in histogramm.channels.keys() {
+                                            for ch_num in histogram.channels.keys() {
                                                 row.push_str(&format!("ch {}\t", *ch_num + 1));
                                             }
                                             row.push('\n');
@@ -163,11 +167,11 @@ impl DataViewerApp {
                                             data.push_str(&row);
                                         }
     
-                                        for (idx, bin) in histogramm.x.iter().enumerate() {
+                                        for (idx, bin) in histogram.x.iter().enumerate() {
                                             let mut row = String::new();
     
                                             row.push_str(&format!("{bin:.4}\t"));
-                                            for val in histogramm.channels.values() {
+                                            for val in histogram.channels.values() {
                                                 row.push_str(&format!("{}\t", val[idx]));
                                             }
                                             row.push('\n');
@@ -268,7 +272,18 @@ impl DataViewerApp {
 
         egui::containers::ScrollArea::new([false, true]).show(ui, |ui| {
             if let Some(root) = &root_lock {
-                file_tree_entry(ui, root, &mut self.state.lock());
+
+                let mut updated = false;
+                file_tree_entry(
+                    ui, root, 
+                    &self.select_single,
+                    &mut self.state.lock(),
+                    &mut updated,
+                );
+
+                if updated && self.select_single {
+                    self.process();
+                }
             }
         });
     }
@@ -376,12 +391,15 @@ impl Default for DataViewerApp {
 fn file_tree_entry(
     ui: &mut egui::Ui,
     entry: &FSRepr,
+    select_single: &bool,
     opened_files: &mut BTreeMap<String, FileCache>,
+    updated: &mut bool,
 ) {
     match entry {
         FSRepr::File { path } => {
+            let key = path.to_str().unwrap().to_string();
             let cache = opened_files
-                .entry(path.to_str().unwrap().to_string())
+                .entry(key.clone())
                 .or_insert(FileCache {
                     opened: false,
                     processed: None,
@@ -390,16 +408,33 @@ fn file_tree_entry(
                 });
 
             let mut change_set = None;
+            let mut exclusive_point = None;
 
             ui.horizontal(|ui| {
-                if ui.checkbox(&mut cache.opened, "").changed() && path.ends_with("meta") {
-                    change_set = Some(cache.opened);
-                };
+                
+                if ui.checkbox(&mut cache.opened, "").changed() {
+
+                    if cache.opened && *select_single {
+                        exclusive_point = Some(key)
+                    }
+
+                    if path.ends_with("meta") {
+                        change_set = Some(cache.opened)
+                    };
+                }
+
                 let filename = path.file_name().unwrap().to_str().unwrap();
                 ui.label(filename);
             });
 
-            if let Some(opened) = change_set {
+            if let Some(point) = exclusive_point {
+                for (key, cache) in opened_files.iter_mut() {
+                    if key != &point {
+                        cache.opened = false;
+                    }
+                }
+                *updated = true;
+            } else if let Some(opened) = change_set {
                 let parent_folder = path.parent().unwrap().to_str().unwrap();
                 let filtered_keys = opened_files
                     .keys()
@@ -409,6 +444,7 @@ fn file_tree_entry(
                 for key in filtered_keys {
                     opened_files.get_mut(&key).unwrap().opened = opened;
                 }
+                *updated = true;
             }
         }
 
@@ -417,7 +453,7 @@ fn file_tree_entry(
                 .id_source(path.to_str().unwrap())
                 .show(ui, |ui| {
                     for child in children {
-                        file_tree_entry(ui, child, opened_files)
+                        file_tree_entry(ui, child, select_single, opened_files, updated)
                     }
                 });
         }
@@ -451,11 +487,16 @@ impl eframe::App for DataViewerApp {
             let mut processing_params = self.processing_params.lock();
             *processing_params = params_editor(ui, processing_params.clone());
             drop(processing_params);
+
+            ui.separator();
+
             self.files_editor(ui);
         });
 
         egui::CentralPanel::default().show(ctx, |ui| {
             let state = self.state.lock();
+
+            let thickness = if ctx.style().visuals.dark_mode { 1.0 } else { 2.0 };
 
             let mut left_border = 0.0;
             let mut right_border = 0.0;
@@ -483,50 +524,16 @@ impl eframe::App for DataViewerApp {
                         left_border = bounds.min()[0] as f32;
                         right_border = bounds.max()[0] as f32;
 
-                        let lines = if opened_files.len() == 1 {
-                            let (_, cache) = opened_files[0];
-                            if !(cache.opened && cache.histogram.is_some()) {
-                                return;
+                        if opened_files.len() == 1 {
+                            if let (_, FileCache {opened: true, histogram: Some(hist), .. }) = opened_files[0] {
+                                hist.draw_egui_each_channel(plot_ui, Some(thickness));
                             }
-                            let hist = cache.histogram.clone().unwrap();
-
-                            hist.channels.iter().map(|(ch_num, y)| {
-                                (format!("ch #{}", ch_num + 1), color_same_as_egui(*ch_num as usize), hist.step, hist.x.clone(), y.clone())
-                            }).collect::<Vec<_>>()
                         } else {
-                            opened_files.iter().enumerate()
-                            .filter_map(|(idx, (filepath, cache))| {
-                                cache.histogram.clone().map(|hist| {
-                                    let mut y_all = vec![0.0; hist.x.len()];
-                                    for (_, y) in hist.channels {
-                                        for (idx, val) in y.iter().enumerate() {
-                                            y_all[idx] += val;
-                                        }
-                                    }
-                                    (filepath.to_string(), color_same_as_egui(idx), hist.step, hist.x, y_all)
-                                })
-                            }).collect::<Vec<_>>()
-                        };
-
-                        for (name, color, step, x, y) in lines {
-                            let mut events_in_window = 0;
-
-                            let line_data = y.iter().enumerate().flat_map(|(idx, y)| {
-                                if x[idx] > left_border && x[idx] < right_border {
-                                    events_in_window += *y as i32;
+                            opened_files.iter().for_each(|(name, cache)| {
+                                if let FileCache {opened: true, histogram: Some(hist), .. } = cache {
+                                    hist.draw_egui(plot_ui, Some(name), Some(thickness), None);
                                 }
-                                [
-                                    [(x[idx] - step / 2.0)  as f64, *y as f64],
-                                    [(x[idx] + step / 2.0)  as f64, *y as f64]
-                                ]
-                            }).collect::<Vec<_>>();
-
-                            plot_ui.line(Line::new(line_data)
-                            .width(if ctx.style().visuals.dark_mode { 1.0 } else { 2.0 })
-                            .color(color)
-                            .name(
-                                format!("{name}\t({events_in_window})")
-                            ))
+                            })
                         }
                     });
                 }
