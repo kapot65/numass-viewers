@@ -460,13 +460,13 @@ fn file_tree_entry(
     }
 }
 
-fn params_editor(ui: &mut Ui, processing_params: ProcessingParams) -> ProcessingParams {
+fn params_editor(ui: &mut Ui, ctx: &egui::Context, processing_params: ProcessingParams) -> ProcessingParams {
 
     let algorithm = algorithm_editor(ui, &processing_params.algorithm);
 
     ui.separator();
 
-    let post_processing = post_processing_editor(ui, &processing_params.post_processing);
+    let post_processing = post_processing_editor(ui, ctx, &processing_params.post_processing);
 
     ui.separator();
 
@@ -485,7 +485,7 @@ impl eframe::App for DataViewerApp {
 
         egui::SidePanel::left("left").show(ctx, |ui| {
             let mut processing_params = self.processing_params.lock();
-            *processing_params = params_editor(ui, processing_params.clone());
+            *processing_params = params_editor(ui, ctx, processing_params.clone());
             drop(processing_params);
 
             ui.separator();

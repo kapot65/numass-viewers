@@ -41,7 +41,7 @@ pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> Hist
     HistogramParams { range: min..max, bins }
 }
 
-pub fn post_processing_editor(ui: &mut Ui, post_processing: &PostProcessingParams) -> PostProcessingParams {
+pub fn post_processing_editor(ui: &mut Ui, ctx: &egui::Context, post_processing: &PostProcessingParams) -> PostProcessingParams {
 
     ui.label("Postprocessing params");
 
@@ -95,16 +95,21 @@ pub fn post_processing_editor(ui: &mut Ui, post_processing: &PostProcessingParam
                     });
                 }
             });
-        #[cfg(not(target_arch = "wasm32"))]
-        {
-            // TODO: add image to web
-            let image = egui_extras::image::RetainedImage::from_image_bytes(
+        // #[cfg(not(target_arch = "wasm32"))]
+
+        let image = if ctx.style().visuals.dark_mode {
+            egui_extras::image::RetainedImage::from_svg_bytes(
                 "Detector.drawio.png",
-                include_bytes!("../resources/Detector.drawio.png"),
-            )
-            .unwrap();
-            image.show(ui);
-        }
+                include_bytes!("../resources/detector_dark.svg"),
+            ).unwrap()
+        } else {
+            egui_extras::image::RetainedImage::from_svg_bytes(
+                "Detector.drawio.png",
+                include_bytes!("../resources/detector_light.svg"),
+            ).unwrap()
+        };
+
+        image.show(ui);
     });
 
     PostProcessingParams { 
@@ -137,7 +142,7 @@ pub fn algorithm_editor(ui: &mut Ui, algorithm: &Algorithm) -> Algorithm {
             ))
             .clicked()
         {
-            algorithm = Algorithm::default()
+            algorithm = Algorithm::Likhovid { left: 15, right: 36 }
         }
 
         if ui

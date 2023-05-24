@@ -79,7 +79,9 @@ fn main() {
         _ => None,
     };
 
+    let web_runner = eframe::WebRunner::new();
     let web_options = eframe::WebOptions::default();
+
     if let Some(ProcessRequest::FilterEvents {
         filepath,
         range,
@@ -90,7 +92,7 @@ fn main() {
     {
         set_title(format!("filtered {filepath:?}").as_str());
         spawn_local(async move {
-            eframe::start_web(
+            web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(move |_| {
@@ -111,7 +113,7 @@ fn main() {
         set_title(filepath.to_str().unwrap());
 
         spawn_local(async move {
-            eframe::start_web(
+            web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(|_| {
@@ -122,8 +124,8 @@ fn main() {
             .expect("failed to start eframe");
         })
     } else {
-        spawn_local(async {
-            eframe::start_web(
+        spawn_local(async move {
+            web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(|_| {
