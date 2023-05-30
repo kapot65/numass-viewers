@@ -4,7 +4,7 @@ use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
 use serde::Serialize;
 use serde_json::json;
 
-use processing::{Algorithm, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine, numass::protos::rsb_event::point::channel};
+use processing::{Algorithm, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine};
 use crate::{algorithm_editor, load_point};
 
 #[cfg(not(target_arch = "wasm32"))]
