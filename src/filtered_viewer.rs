@@ -4,7 +4,7 @@ use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
 use serde::Serialize;
 use serde_json::json;
 
-use processing::{Algorithm, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine};
+use processing::{Algorithm, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine, numass::protos::rsb_event::point::channel};
 use crate::{algorithm_editor, load_point};
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -36,6 +36,23 @@ struct ProcessedDeviceFrame {
     pub channels: BTreeMap<u8, ProcessedChannel>
 }
 
+impl ProcessedDeviceFrame {
+    pub fn merge(&self) -> Self {
+        let mut merged = ProcessedWaveform(vec![0.0; self.channels.first_key_value().unwrap().1.waveform.0.len()]);
+        
+        self.channels.iter().for_each(|(_, channel)| {
+            channel.waveform.0.iter().enumerate().for_each(|(j, value)| {
+                merged.0[j] += value;
+            })
+        });
+
+        let mut channels = BTreeMap::new();
+        channels.insert(5u8, ProcessedChannel { waveform: merged, peaks: None});
+
+        Self { time: self.time, channels }
+    }
+}
+
 #[derive(Debug, Clone)]
 enum AppState {
     Initializing,
@@ -53,6 +70,7 @@ pub struct FilteredViewer {
     indexes: Arc<Mutex<Option<Vec<usize>>>>,
     state: Arc<Mutex<AppState>>,
     current: usize,
+    merge: bool
 }
 
 impl FilteredViewer {
@@ -73,7 +91,8 @@ impl FilteredViewer {
             events: Arc::new(Mutex::new(None)),
             indexes: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(AppState::Initializing)),
-            current: 0
+            current: 0,
+            merge: false
         };
 
         let events = Arc::clone(&viewer.events);
@@ -276,6 +295,8 @@ impl eframe::App for FilteredViewer {
             if ui.button("apply").clicked() {
                 self.update_indexes();
             }
+
+            ui.checkbox(&mut self.merge, "merge waveforms");
         });
 
         eframe::egui::TopBottomPanel::top("position").show(ctx, |ui| {
@@ -373,7 +394,9 @@ impl eframe::App for FilteredViewer {
 
                         let position = indexes[self.current];
 
-                        let ProcessedDeviceFrame { time, channels } = events[position].to_owned();
+                        let ProcessedDeviceFrame { time, channels } = if self.merge {
+                            events[position].merge().to_owned()
+                        } else { events[position].to_owned() };
 
                         FilteredViewer::plot_processed_frame(plot_ui, channels, false, 0);
 
