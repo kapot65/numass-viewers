@@ -1,7 +1,7 @@
 use std::{sync::Arc, path::PathBuf};
 
 use egui::mutex::Mutex;
-use processing::{point_to_chunks, color_for_index, ProcessedWaveform, EguiLine};
+use processing::{color_for_index, ProcessedWaveform, numass::protos::rsb_event, process_waveform, EguiLine};
 
 use crate::load_point;
 
@@ -18,12 +18,40 @@ enum AppState {
     Interactive
 }
 
-type Chunk = Vec<(u8, ProcessedWaveform)>;
+type Chunk = Vec<(u8, i64, ProcessedWaveform)>;
 
 pub struct PointViewer {
     chunks: Arc<Mutex<Option<Vec<Chunk>>>>,
     current_chunk: usize,
     state: Arc<Mutex<AppState>>,
+}
+
+fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
+
+    let mut chunks = vec![];
+    chunks.push(vec![]);
+
+    for channel in point.channels {
+        for block in channel.blocks {
+            for frame in block.frames {
+                let chunk_num = (frame.time / limit_ns) as usize;
+                
+                while chunks.len() < chunk_num + 1 {
+                    chunks.push(vec![])
+                }
+
+                let waveform = process_waveform(&frame);
+
+                chunks[chunk_num].push((
+                    channel.id as u8,
+                    (frame.time % limit_ns) as i64,
+                    waveform.into()
+                ));
+            }
+        }
+    }
+
+    chunks
 }
 
 impl PointViewer {
@@ -112,13 +140,13 @@ impl eframe::App for PointViewer {
                             .x_axis_formatter(|value, _| format!("{value:.3} μs"))
                             .show(ui, |plot_ui| {
 
-                                for (ch_num, waveform) in chunks[self.current_chunk].clone() {
+                                for (ch_num, offset, waveform) in chunks[self.current_chunk].clone() {
 
                                     waveform.draw_egui(
                                         plot_ui, 
                                         Some(&format!("ch #{}", ch_num + 1)), 
                                         Some(color_for_index((ch_num) as usize)),
-                                         None, None
+                                         None, Some(offset)
                                     );
                                 }
                             });
