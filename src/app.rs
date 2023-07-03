@@ -155,36 +155,14 @@ impl DataViewerApp {
                                             temp.file_name().unwrap().to_owned()
                                         };
     
-                                        let mut data = String::new();
-                                        {
-                                            let mut row = String::new();
-                                            row.push_str("bin\t");
-                                            for ch_num in histogram.channels.keys() {
-                                                row.push_str(&format!("ch {}\t", *ch_num + 1));
-                                            }
-                                            row.push('\n');
-    
-                                            data.push_str(&row);
-                                        }
-    
-                                        for (idx, bin) in histogram.x.iter().enumerate() {
-                                            let mut row = String::new();
-    
-                                            row.push_str(&format!("{bin:.4}\t"));
-                                            for val in histogram.channels.values() {
-                                                row.push_str(&format!("{}\t", val[idx]));
-                                            }
-                                            row.push('\n');
-                                            data.push_str(&row);
-                                        }
+                                        let data = histogram.to_csv('\t');
     
                                         let mut filepath = save_folder.clone();
                                         filepath.push(point_name);
     
                                         #[cfg(not(target_arch = "wasm32"))]
                                         {
-                                            let mut out_file = File::create(filepath).unwrap();
-                                            out_file.write_all(data.as_bytes()).unwrap();
+                                            std::fs::write(filepath, data).unwrap();
                                         }
                                         #[cfg(target_arch = "wasm32")]
                                         download(filepath.to_str().unwrap(), &data);
