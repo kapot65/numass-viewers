@@ -5,23 +5,28 @@ use std::sync::Arc;
 use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot, Points}}};
 
 use processing::{ProcessingParams, numass::{NumassMeta, Reply}};
-use backend::{FSRepr, FileCache};
+
 use crate::{algorithm_editor, post_processing_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    backend::{expand_dir, process_file},
+    processing::{extract_amplitudes, web::{expand_dir, FSRepr, FileCache}},
+    numass::{self, protos::rsb_event},
+    dataforge::{read_df_message, DFMessage},
     home::home_dir,
     std::fs::File,
     std::io::Write,
+    protobuf::Message,
     tokio::spawn,
     which::which,
 };
 
 #[cfg(target_arch = "wasm32")]
 use {
-    backend::ProcessRequest, eframe::web_sys::window, gloo_net::http::Request,
+    eframe::web_sys::window, gloo::net::http::Request,
     wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
+    processing::web::{FSRepr, FileCache, ProcessRequest}, 
+    crate::worker::WebThreadPool
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -38,7 +43,7 @@ pub enum PlotMode {
 }
 
 #[derive(Clone, Copy)]
-struct ProcessingStatus {
+pub struct ProcessingStatus {
     pub running: bool,
     pub total: usize,
     pub processed: usize
@@ -50,19 +55,35 @@ pub struct DataViewerApp {
     plot_mode: PlotMode,
     processing_status: Arc<Mutex<ProcessingStatus>>,
     processing_params: Arc<Mutex<ProcessingParams>>,
+
     state: Arc<Mutex<BTreeMap<String, FileCache>>>,
+
+    #[cfg(target_arch = "wasm32")]
+    thread_pool: Arc<WebThreadPool>,
 }
+
 
 impl DataViewerApp {
     pub fn new() -> Self {
+
+        let state = Arc::new(Mutex::new(BTreeMap::new()));
+        let processing_status = Arc::new(Mutex::new(ProcessingStatus { 
+            running: false, total: 0, processed: 0 }));
+
+        #[cfg(target_arch = "wasm32")]
+        let thread_pool = Arc::new(WebThreadPool::new(
+            Arc::clone(&state), 
+            Arc::clone(&processing_status)));
+
         Self {
             root: Arc::new(Mutex::new(None)),
             select_single: false,
-            state: Arc::new(Mutex::new(BTreeMap::new())),
-            processing_status: Arc::new(Mutex::new(ProcessingStatus { 
-                running: false, total: 0, processed: 0 })),
+            state,
+            processing_status,
             processing_params: Arc::new(Mutex::new(processing::ProcessingParams::default())),
             plot_mode: PlotMode::Histogram,
+            #[cfg(target_arch = "wasm32")]
+            thread_pool
         }
     }
 
@@ -172,6 +193,7 @@ impl DataViewerApp {
 
                             PlotMode::PPT => {
 
+                                // TODO: change to to_csv()
                                 let mut data = String::new();
                                 {
                                     data.push_str("path\ttime\tcounts\n");
@@ -213,7 +235,6 @@ impl DataViewerApp {
                                 }
     
                                 for (name, cache) in state_sorted.iter() {
-
 
                                     if let FileCache { meta: Some(
                                         NumassMeta::Reply(Reply::AcquirePoint {
@@ -271,6 +292,9 @@ impl DataViewerApp {
         let state = Arc::clone(&self.state);
         let status = Arc::clone(&self.processing_status);
 
+        #[cfg(target_arch = "wasm32")]
+        let thread_pool = Arc::clone(&self.thread_pool);
+
         spawn(async move {
 
             let files_to_processed = {
@@ -279,19 +303,7 @@ impl DataViewerApp {
                     .iter()
                     .filter_map(|(filepath, cache)| {
                         if cache.opened {
-                            let need_recalc = true;
-                            if need_recalc {
-                                Some(filepath.clone())
-                            } else if let Some(processed) = cache.processed {
-                                let meta = std::fs::metadata(filepath).unwrap();
-                                if processed >= meta.modified().unwrap() {
-                                    None
-                                } else {
-                                    Some(filepath.clone())
-                                }
-                            } else {
-                                Some(filepath.clone())
-                            }
+                            Some(filepath.clone())
                         } else {
                             None
                         }
@@ -311,49 +323,64 @@ impl DataViewerApp {
             }
 
             for filepath in files_to_processed {
+                #[cfg(not(target_arch = "wasm32"))]
                 let configuration_local = state.clone();
+                #[cfg(not(target_arch = "wasm32"))]
                 let status = Arc::clone(&status);
+
+                #[cfg(target_arch = "wasm32")]
+                let thread_pool = Arc::clone(&thread_pool);
 
                 let processing = params.clone();
                 spawn(async move {
                     #[cfg(not(target_arch = "wasm32"))]
-                    let cache = { process_file(PathBuf::from(&filepath), processing) };
-                    #[cfg(target_arch = "wasm32")]
-                    let cache = {
-                        let value = Request::post("/api/process")
-                            .json(&ProcessRequest::CalcHist {
-                                filepath: PathBuf::from(&filepath),
-                                processing,
-                            })
-                            .unwrap()
-                            .send()
-                            .await
-                            .unwrap()
-                            .json::<serde_json::Value>()
-                            .await
-                            .unwrap();
-                        serde_json::from_value::<Option<FileCache>>(value).unwrap()
-                    };
-                    let mut conf = configuration_local.lock();
-                    conf.insert(
-                        filepath.to_owned(),
-                        cache.unwrap_or(FileCache {
-                            opened: false,
-                            processed: None,
-                            histogram: None,
-                            meta: None,
-                        }),
-                    );
+                    {
+                        let mut point_file = tokio::fs::File::open(&filepath).await.unwrap();
+                        if let Ok(DFMessage {
+                            meta,
+                            data,
+                        }) = read_df_message::<numass::NumassMeta>(&mut point_file).await {
 
-                    let mut status = status.lock();
-                    status.processed += 1;
-                    if status.processed == status.total {
-                        *status = ProcessingStatus {
-                            running: false,
-                            total: 0,
-                            processed: 0
+                            if let numass::NumassMeta::Reply(numass::Reply::AcquirePoint { .. }) = meta.clone() {
+                                let point = rsb_event::Point::parse_from_bytes(&data.unwrap()).unwrap(); // return None for bad parsing
+                                let amplitudes = Some(extract_amplitudes(
+                                    &point,
+                                    &params.algorithm,
+                                    params.post_processing.convert_to_kev,
+                                ));
+                                
+                                if let Some(amplitudes) = amplitudes {
+                        
+                                    let processed = processing::post_process(amplitudes, &processing.post_processing);
+                                    let  histogram = processing::amplitudes_to_histogram(processed, processing.histogram);
+
+                                    let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, FileCache>> = configuration_local.lock();
+                                    conf.insert(
+                                        filepath.to_owned(),
+                                        FileCache {
+                                            opened: true,
+                                            histogram: Some(histogram),
+                                            meta: Some(meta),
+                                        },
+                                    );
+                                }
+                            }
+                            
+                            {
+                                let mut status = status.lock();
+                                status.processed += 1;
+                                if status.processed == status.total {
+                                    *status = ProcessingStatus {
+                                        running: false,
+                                        total: 0,
+                                        processed: 0
+                                    }
+                                }
+                            }
                         }
                     }
+                    #[cfg(target_arch = "wasm32")]
+                    thread_pool.process_point(filepath, processing).await;
                 });
             }
         });
@@ -380,7 +407,6 @@ fn file_tree_entry(
                 .entry(key.clone())
                 .or_insert(FileCache {
                     opened: false,
-                    processed: None,
                     histogram: None,
                     meta: None,
                 });

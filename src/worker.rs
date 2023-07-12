@@ -1,0 +1,247 @@
+use std::{
+    collections::{BTreeMap, HashMap}, cell::RefCell, 
+    sync::Arc, time::SystemTime
+};
+
+use egui::mutex::Mutex;
+use gloo::{
+    worker::{HandlerId, Worker, WorkerScope, Spawnable, WorkerBridge}, 
+    net::http::Request
+};
+use serde::{Serialize, Deserialize};
+
+use processing::{
+    histogram::PointHistogram, ProcessingParams, 
+    web::{FileCache, ProcessParams}, 
+    Algorithm, numass::NumassMeta
+};
+use crate::app::ProcessingStatus;
+
+pub struct WebWorker {
+
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum WebWorkerRequests {
+    CalcHist {
+        key: String,
+        amplitudes_raw: Vec<u8>,
+        processing: ProcessingParams
+    }
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+pub enum WebWorkerResponses {
+    CalcHist {
+        key: String,
+        histogram: PointHistogram
+    }
+}
+
+impl Worker for WebWorker {
+    type Input = WebWorkerRequests;
+    type Message = ();
+    type Output = WebWorkerResponses;
+
+    fn create(_scope: &WorkerScope<Self>) -> Self {
+        Self {}
+    }
+
+    fn update(&mut self, _scope: &WorkerScope<Self>, _msg: Self::Message) {
+
+    }
+
+    fn received(&mut self, scope: &WorkerScope<Self>, msg: Self::Input, id: HandlerId) {
+        match msg {
+            WebWorkerRequests::CalcHist { 
+                key,
+                amplitudes_raw, 
+                processing,
+            } => {
+                let amplitudes = rmp_serde::from_slice::<Option<BTreeMap<u64, BTreeMap<usize, f32>>>>(&amplitudes_raw).unwrap().unwrap();
+                let processed = processing::post_process(amplitudes, &processing.post_processing);
+                let  histogram = processing::amplitudes_to_histogram(processed, processing.histogram);
+                scope.respond(id, WebWorkerResponses::CalcHist {
+                    key,
+                    histogram
+                })
+            }
+        }
+    }
+}
+
+pub struct WebThreadPool {
+    current: RefCell<usize>,
+    threads: Vec<WorkerBridge<WebWorker>>,
+    status: Arc<Mutex<ProcessingStatus>>,
+    files_cache: Arc<Mutex<HashMap<String, CachedFile>>>
+}
+
+struct CachedFile {
+    in_kev: bool,
+    algorithm: Algorithm,
+    modified: SystemTime,
+    meta: NumassMeta,
+    raw_amplitudes: Vec<u8>,
+}
+
+
+impl WebThreadPool {
+
+    fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
+        let mut status = status.lock();
+        status.processed += 1;
+        if status.processed == status.total {
+            *status = ProcessingStatus {
+                running: false,
+                total: 0,
+                processed: 0
+            }
+        }
+    }
+
+    pub fn new(
+        state: Arc<Mutex<BTreeMap<String, FileCache>>>,
+        status: Arc<Mutex<ProcessingStatus>>,
+    ) -> Self {
+
+        console_error_panic_hook::set_once();
+
+        let files_cache = Arc::new(Mutex::new(HashMap::<String, CachedFile>::new()));
+        let concurrency = gloo::utils::window().navigator().hardware_concurrency() as usize - 1;
+
+        let threads = (0..concurrency).map(|_| {
+            let status = Arc::clone(&status);
+            let state = Arc::clone(&state);
+            let files_cache = Arc::clone(&files_cache);
+
+            crate::worker::WebWorker::spawner()
+                .callback(move |resp| {
+
+                    match resp {
+                        crate::worker::WebWorkerResponses::CalcHist { 
+                            key,
+                            histogram 
+                        } => {
+
+                            let meta = files_cache.lock().get(&key).map(|file_cache| {
+                                file_cache.meta.clone()
+                            });
+
+                            let mut conf = state.lock();
+                            conf.insert(
+                                key,
+                                FileCache {
+                                    opened: true,
+                                    histogram: Some(histogram),
+                                    meta, // TODO: handle meta
+                                },
+                            );
+                        }
+                    }
+
+                    WebThreadPool::inc_status(Arc::clone(&status));
+                        
+                })
+                .spawn("./worker.js")
+        }).collect::<Vec<_>>();
+
+        Self {
+            current: RefCell::new(0),
+            files_cache,
+            status,
+            threads
+        }
+    }
+
+    pub fn send(&self, cmd: WebWorkerRequests) {
+        if self.current.take() == self.threads.len() {
+            *self.current.borrow_mut() = 0;
+        }
+        self.threads[self.current.take()].send(cmd);
+        *self.current.borrow_mut() += 1;
+    }
+
+    pub async fn process_point(&self, filepath: String, processing: ProcessingParams) {
+
+        // get file modification time
+        let modified = Request::get(&format!("/api/modified{filepath}"))
+            .send()
+            .await
+            .unwrap()
+            .json::<SystemTime>()
+            .await
+            .unwrap();
+
+        // search and validate file in cache
+        let cached = {
+            let files_cache = self.files_cache.lock();
+            if let Some(entry) = files_cache.get(&filepath) {
+                if entry.in_kev == processing.post_processing.convert_to_kev && 
+                   entry.algorithm == processing.algorithm &&
+                   entry.modified >= modified {
+                    Some(entry.raw_amplitudes.clone())
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        };
+
+        // get raw amplitudes or fetch from server
+        let amplitudes_raw = if let Some(out) = cached {
+            Some(out)
+        } else {
+
+            let meta = Request::get(&format!("/api/meta{filepath}"))
+            .send()
+            .await
+            .unwrap()
+            .json::<Option<NumassMeta>>()
+            .await
+            .unwrap();
+
+            if let Some(NumassMeta::Reply(processing::numass::Reply::AcquirePoint { .. })) = &meta {
+
+                let amplitudes_raw = Request::post(&format!("/api/process{filepath}"))
+                .json(&ProcessParams {
+                    algorithm: processing.algorithm,
+                    convert_to_kev: processing.post_processing.convert_to_kev
+                }).unwrap()
+                .send()
+                .await
+                .unwrap()
+                .binary()
+                .await
+                .unwrap();
+
+                self.files_cache.lock().insert(
+                    filepath.clone(), CachedFile { 
+                        in_kev: processing.post_processing.convert_to_kev, 
+                        algorithm: processing.algorithm, 
+                        modified, 
+                        meta: meta.unwrap(),
+                        raw_amplitudes: amplitudes_raw.clone() 
+                    }
+                );
+
+                Some(amplitudes_raw)
+
+            } else {
+                None
+            }
+        };
+
+        // send to worker
+        if let Some(amplitudes_raw) = amplitudes_raw {
+            self.send(WebWorkerRequests::CalcHist {
+                key: filepath.clone(),
+                amplitudes_raw,
+                processing
+            });
+        } else {
+            WebThreadPool::inc_status(Arc::clone(&self.status));
+        }
+    }
+}

@@ -10,9 +10,7 @@ use processing::{histogram::HistogramParams, PostProcessingParams, Algorithm, nu
 #[cfg(target_arch = "wasm32")]
 use {
     std::io::Cursor,
-
-    gloo_net::http::Request,
-
+    gloo::net::http::Request,
     dataforge::{read_df_message_sync, DFMessage},
     processing::numass::NumassMeta
 };
@@ -26,6 +24,9 @@ use {
 pub mod app;
 pub mod filtered_viewer;
 pub mod point_viewer;
+
+#[cfg(target_arch = "wasm32")]
+pub mod worker;
 
 pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> HistogramParams {
 

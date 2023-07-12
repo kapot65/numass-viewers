@@ -6,7 +6,7 @@ use viewers::app;
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
-    use backend::{expand_dir, CACHE_DIRECTORY};
+    use processing::web::expand_dir;
     use {clap::Parser, std::path::PathBuf};
 
     #[derive(Parser, Debug)]
@@ -26,13 +26,6 @@ async fn main() -> eframe::Result<()> {
     }));
 
     let opt = Opt::parse();
-    if let Some(cache_directory) = opt.cache_directory {
-        if std::env::var(CACHE_DIRECTORY).is_err() {
-            std::env::set_var(CACHE_DIRECTORY, cache_directory)
-        } else {
-            panic!("cache directory is set via CLI and ENV at the same time!")
-        }
-    }
 
     // Log to stdout (if you run with `RUST_LOG=debug`).
     tracing_subscriber::fmt::init();
@@ -55,7 +48,7 @@ async fn main() -> eframe::Result<()> {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::web_sys::window;
-    use backend::ProcessRequest;
+    use processing::web::ProcessRequest;
     use viewers::{
         filtered_viewer, point_viewer
     };
