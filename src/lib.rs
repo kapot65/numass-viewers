@@ -5,7 +5,7 @@ use std::path::PathBuf;
 use egui::Ui;
 use protobuf::Message;
 
-use processing::{histogram::HistogramParams, PostProcessingParams, Algorithm, numass::protos::rsb_event};
+use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams};
 
 #[cfg(target_arch = "wasm32")]
 use {
@@ -42,15 +42,12 @@ pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> Hist
     HistogramParams { range: min..max, bins }
 }
 
-pub fn post_processing_editor(ui: &mut Ui, ctx: &egui::Context, post_processing: &PostProcessingParams) -> PostProcessingParams {
+pub fn post_process_editor(ui: &mut Ui, ctx: &egui::Context, params: &PostProcessParams) -> PostProcessParams {
 
     ui.label("Postprocessing params");
 
-    let mut convert_to_kev = post_processing.convert_to_kev;
-    ui.checkbox(&mut convert_to_kev, "convert to keV");
-
-    let mut use_dead_time = post_processing.use_dead_time;
-    let mut effective_dead_time = post_processing.effective_dead_time;
+    let mut use_dead_time = params.use_dead_time;
+    let mut effective_dead_time = params.effective_dead_time;
 
     ui.checkbox(&mut use_dead_time, "use dead time");
     ui.add_enabled(
@@ -58,10 +55,10 @@ pub fn post_processing_editor(ui: &mut Ui, ctx: &egui::Context, post_processing:
         egui::Slider::new(&mut effective_dead_time, 0..=30000).text("ns"),
     );
 
-    let mut merge_close_events = post_processing.merge_close_events;
+    let mut merge_close_events = params.merge_close_events;
     ui.checkbox(&mut merge_close_events, "merge close events");
 
-    let mut merge_map = post_processing.merge_map;
+    let mut merge_map = params.merge_map;
     ui.collapsing("merge mapping", |ui| {
         egui_extras::TableBuilder::new(ui)
             // .auto_shrink([false, false])
@@ -96,7 +93,6 @@ pub fn post_processing_editor(ui: &mut Ui, ctx: &egui::Context, post_processing:
                     });
                 }
             });
-        // #[cfg(not(target_arch = "wasm32"))]
 
         let image = if ctx.style().visuals.dark_mode {
             egui_extras::image::RetainedImage::from_svg_bytes(
@@ -113,8 +109,7 @@ pub fn post_processing_editor(ui: &mut Ui, ctx: &egui::Context, post_processing:
         image.show(ui);
     });
 
-    PostProcessingParams { 
-        convert_to_kev,
+    PostProcessParams { 
         use_dead_time,
         effective_dead_time,
         merge_close_events,
@@ -122,11 +117,11 @@ pub fn post_processing_editor(ui: &mut Ui, ctx: &egui::Context, post_processing:
     }
 }
 
-pub fn algorithm_editor(ui: &mut Ui, algorithm: &Algorithm) -> Algorithm {
+pub fn process_editor(ui: &mut Ui, params: &ProcessParams) -> ProcessParams {
 
-    let mut algorithm = algorithm.to_owned();
+    let mut algorithm = params.algorithm.to_owned();
 
-    ui.label("Algorithm params");
+    ui.label("Processing params");
 
     ui.horizontal(|ui| {
         if ui
@@ -157,7 +152,7 @@ pub fn algorithm_editor(ui: &mut Ui, algorithm: &Algorithm) -> Algorithm {
         }
     });
 
-    match algorithm {
+    let algorithm = match algorithm {
         Algorithm::Max => {
             algorithm
         }
@@ -178,7 +173,12 @@ pub fn algorithm_editor(ui: &mut Ui, algorithm: &Algorithm) -> Algorithm {
             ui.add(egui::Slider::new(&mut threshold, 0..=400).text("threshold"));
             Algorithm::FirstPeak { threshold, left }
         }
-    }
+    };
+
+    let mut convert_to_kev = params.convert_to_kev;
+    ui.checkbox(&mut convert_to_kev, "convert to keV");
+
+    ProcessParams { algorithm, convert_to_kev }
 }
 
 pub async fn load_point(filepath: PathBuf) -> rsb_event::Point {

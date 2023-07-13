@@ -11,9 +11,9 @@ use gloo::{
 use serde::{Serialize, Deserialize};
 
 use processing::{
-    histogram::PointHistogram, ProcessingParams, 
-    web::{FileCache, ProcessParams}, 
-    Algorithm, numass::NumassMeta
+    histogram::PointHistogram, ProcessParams,
+    viewer::{FileCache, ViewerState}, 
+    numass::NumassMeta
 };
 use crate::app::ProcessingStatus;
 
@@ -26,7 +26,7 @@ pub enum WebWorkerRequests {
     CalcHist {
         key: String,
         amplitudes_raw: Vec<u8>,
-        processing: ProcessingParams
+        state: ViewerState
     }
 }
 
@@ -56,10 +56,10 @@ impl Worker for WebWorker {
             WebWorkerRequests::CalcHist { 
                 key,
                 amplitudes_raw, 
-                processing,
+                state: processing,
             } => {
                 let amplitudes = rmp_serde::from_slice::<Option<BTreeMap<u64, BTreeMap<usize, f32>>>>(&amplitudes_raw).unwrap().unwrap();
-                let processed = processing::post_process(amplitudes, &processing.post_processing);
+                let processed = processing::post_process(amplitudes, &processing.post_process);
                 let  histogram = processing::amplitudes_to_histogram(processed, processing.histogram);
                 scope.respond(id, WebWorkerResponses::CalcHist {
                     key,
@@ -78,8 +78,7 @@ pub struct WebThreadPool {
 }
 
 struct CachedFile {
-    in_kev: bool,
-    algorithm: Algorithm,
+    process: ProcessParams,
     modified: SystemTime,
     meta: NumassMeta,
     raw_amplitudes: Vec<u8>,
@@ -162,7 +161,7 @@ impl WebThreadPool {
         *self.current.borrow_mut() += 1;
     }
 
-    pub async fn process_point(&self, filepath: String, processing: ProcessingParams) {
+    pub async fn process_point(&self, filepath: String, state: ViewerState) {
 
         // get file modification time
         let modified = Request::get(&format!("/api/modified{filepath}"))
@@ -177,8 +176,7 @@ impl WebThreadPool {
         let cached = {
             let files_cache = self.files_cache.lock();
             if let Some(entry) = files_cache.get(&filepath) {
-                if entry.in_kev == processing.post_processing.convert_to_kev && 
-                   entry.algorithm == processing.algorithm &&
+                if entry.process == state.process &&
                    entry.modified >= modified {
                     Some(entry.raw_amplitudes.clone())
                 } else {
@@ -205,10 +203,7 @@ impl WebThreadPool {
             if let Some(NumassMeta::Reply(processing::numass::Reply::AcquirePoint { .. })) = &meta {
 
                 let amplitudes_raw = Request::post(&format!("/api/process{filepath}"))
-                .json(&ProcessParams {
-                    algorithm: processing.algorithm,
-                    convert_to_kev: processing.post_processing.convert_to_kev
-                }).unwrap()
+                .json(&state.process).unwrap()
                 .send()
                 .await
                 .unwrap()
@@ -218,8 +213,7 @@ impl WebThreadPool {
 
                 self.files_cache.lock().insert(
                     filepath.clone(), CachedFile { 
-                        in_kev: processing.post_processing.convert_to_kev, 
-                        algorithm: processing.algorithm, 
+                        process: state.process,
                         modified, 
                         meta: meta.unwrap(),
                         raw_amplitudes: amplitudes_raw.clone() 
@@ -238,7 +232,7 @@ impl WebThreadPool {
             self.send(WebWorkerRequests::CalcHist {
                 key: filepath.clone(),
                 amplitudes_raw,
-                processing
+                state
             });
         } else {
             WebThreadPool::inc_status(Arc::clone(&self.status));

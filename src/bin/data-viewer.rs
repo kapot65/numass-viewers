@@ -6,7 +6,7 @@ use viewers::app;
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
-    use processing::web::expand_dir;
+    use processing::viewer::FSRepr;
     use {clap::Parser, std::path::PathBuf};
 
     #[derive(Parser, Debug)]
@@ -37,7 +37,7 @@ async fn main() -> eframe::Result<()> {
         Box::new(|_| {
             let app = app::DataViewerApp::new();
             if let Some(directory) = opt.directory {
-                *app.root.lock() = expand_dir(directory)
+                *app.root.lock() = FSRepr::expand_dir(directory)
             }
             Box::new(app)
         }),
@@ -48,7 +48,7 @@ async fn main() -> eframe::Result<()> {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::web_sys::window;
-    use processing::web::ProcessRequest;
+    use processing::viewer::ViewerMode;
     use viewers::{
         filtered_viewer, point_viewer
     };
@@ -67,7 +67,7 @@ fn main() {
     let request = match window().unwrap().location().search() {
         Ok(search) => {
             let search = search.trim_start_matches('?');
-            serde_qs::from_str::<ProcessRequest>(search).ok()
+            serde_qs::from_str::<ViewerMode>(search).ok()
         }
         _ => None,
     };
@@ -75,12 +75,11 @@ fn main() {
     let web_runner = eframe::WebRunner::new();
     let web_options = eframe::WebOptions::default();
 
-    if let Some(ProcessRequest::FilterEvents {
+    if let Some(ViewerMode::FilterEvents {
         filepath,
         range,
         neighborhood,
-        algorithm,
-        convert_kev
+        processing
     }) = request
     {
         set_title(format!("filtered {filepath:?}").as_str());
@@ -91,9 +90,8 @@ fn main() {
                 Box::new(move |_| {
                     let app = filtered_viewer::FilteredViewer::init_with_point(
                         filepath, 
-                        algorithm, 
-                        range, 
-                        convert_kev, 
+                        processing, 
+                        range,
                         neighborhood);
                     Box::new(app)
                 }),
@@ -101,7 +99,7 @@ fn main() {
             .await
             .expect("failed to start eframe");
         })
-    } else if let Some(ProcessRequest::SplitTimeChunks { filepath }) = request {
+    } else if let Some(ViewerMode::SplitTimeChunks { filepath }) = request {
 
         set_title(filepath.to_str().unwrap());
 

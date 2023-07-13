@@ -4,8 +4,8 @@ use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
 use serde::Serialize;
 use serde_json::json;
 
-use processing::{Algorithm, convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine};
-use crate::{algorithm_editor, load_point};
+use processing::{convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine, ProcessParams};
+use crate::{process_editor, load_point};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -62,10 +62,9 @@ enum AppState {
 
 pub struct FilteredViewer {
     filepath: PathBuf,
-    algorithm: Algorithm,
+    processing: ProcessParams,
     range: Range<f32>,
     neighborhood: usize,
-    convert_kev: bool,
     events: Arc<Mutex<Option<Vec<ProcessedDeviceFrame>>>>,
     indexes: Arc<Mutex<Option<Vec<usize>>>>,
     state: Arc<Mutex<AppState>>,
@@ -76,18 +75,16 @@ pub struct FilteredViewer {
 impl FilteredViewer {
     pub fn init_with_point(
         filepath: PathBuf,
-        algorithm: Algorithm,
+        processing: ProcessParams,
         range: Range<f32>,
-        convert_kev: bool,
         neighborhood: usize
     ) -> Self {
 
         let viewer = Self {
             filepath: filepath.clone(),
-            algorithm,
+            processing,
             range,
             neighborhood,
-            convert_kev,
             events: Arc::new(Mutex::new(None)),
             indexes: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(AppState::Initializing)),
@@ -135,9 +132,8 @@ impl FilteredViewer {
 
         let indexes = Arc::clone(&self.indexes);
         let events: Arc<Mutex<Option<Vec<ProcessedDeviceFrame>>>> = Arc::clone(&self.events);
-        let algorithm = self.algorithm;
+        let processing = self.processing;
         let range = self.range.clone();
-        let convert_kev = self.convert_kev;
 
         self.current = 0;
 
@@ -145,9 +141,9 @@ impl FilteredViewer {
             if let Some(events) = events.lock().as_mut() { 
                 events.iter_mut().for_each(|ProcessedDeviceFrame { channels, .. }| {
                     channels.iter_mut().for_each(|(ch_id, processed)| {
-                        processed.peaks =  Some(waveform_to_events(&processed.waveform, &algorithm).iter().map(|(time, pos)|{
-                            let pos = if convert_kev {
-                                convert_to_kev(pos, *ch_id, &algorithm)
+                        processed.peaks =  Some(waveform_to_events(&processed.waveform, &processing.algorithm).iter().map(|(time, pos)|{
+                            let pos = if processing.convert_to_kev {
+                                convert_to_kev(pos, *ch_id, &processing.algorithm)
                             } else {
                                 *pos
                             };
@@ -272,17 +268,10 @@ impl eframe::App for FilteredViewer {
         });
 
         eframe::egui::SidePanel::left("parameters").show(ctx, |ui| {
-            let algorithm = algorithm_editor(ui, &self.algorithm);
-            self.algorithm = algorithm;
 
-            ui.checkbox(&mut self.convert_kev, "convert to keV");
+            let processing = process_editor(ui, &self.processing);
 
-
-            if self.convert_kev {
-                ui.label("range in keV");
-            } else {
-                ui.label("range");
-            }
+            ui.separator();
             let mut min = self.range.start;
             ui.add(egui::Slider::new(&mut min, -10.0..=400.0).text("left"));
             let mut max = self.range.end;
@@ -292,11 +281,11 @@ impl eframe::App for FilteredViewer {
             ui.label("neighborhood");
             ui.add(egui::Slider::new(&mut self.neighborhood, 0..=10000).text("ns"));
 
+            ui.checkbox(&mut self.merge, "merge waveforms");
+
             if ui.button("apply").clicked() {
                 self.update_indexes();
             }
-
-            ui.checkbox(&mut self.merge, "merge waveforms");
         });
 
         eframe::egui::TopBottomPanel::top("position").show(ctx, |ui| {
@@ -341,7 +330,7 @@ impl eframe::App for FilteredViewer {
 
                         let output = json!({
                             "filepath": self.filepath.clone(),
-                            "algorithm": self.algorithm,
+                            "processing": self.processing,
                             "range": self.range,
                             "neighborhood": self.neighborhood,
                             "trigger_event": trigger_event,

@@ -23,24 +23,20 @@ async fn main() {
         /// size of neighboor events will be shown (in nanoseconds)
         #[clap(long, default_value_t = 5000)]
         neighborhood: usize,
-        /// convert amplitudes to kev
+        /// processing params serialized to json
         #[clap(long)]
-        convert_kev: bool,
-        /// algorithm params serialized to json (default Max)
-        #[clap(long)]
-        algorithm: Option<String>
+        processing: Option<String>
     }
 
     let args = Opt::parse();
     let filepath = args.filepath;
     let neighborhood = args.neighborhood;
     let range = args.min..args.max;
-    let convert_kev = args.convert_kev;
 
-    let algorithm = if let Some(algorithm) = args.algorithm {
-        serde_json::from_str(&algorithm).expect("cant parse algorithm param")
+    let processing = if let Some(processing) = args.processing {
+        serde_json::from_str(&processing).expect("cant parse algorithm param")
     } else {
-        processing::Algorithm::Max
+        processing::ProcessParams::default()
     };
 
     let native_options = eframe::NativeOptions::default();
@@ -48,7 +44,7 @@ async fn main() {
         format!("filtered {filepath:?}").as_str(),
         native_options,
         Box::new(move |_| {
-            Box::new(FilteredViewer::init_with_point(filepath, algorithm, range, convert_kev, neighborhood))
+            Box::new(FilteredViewer::init_with_point(filepath, processing, range, neighborhood))
         }),
     )
     .unwrap();

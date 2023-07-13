@@ -4,13 +4,13 @@ use std::sync::Arc;
 
 use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot, Points}}};
 
-use processing::{ProcessingParams, numass::{NumassMeta, Reply}};
+use processing::{viewer::ViewerState, numass::{NumassMeta, Reply}};
 
-use crate::{algorithm_editor, post_processing_editor, histogram_params_editor};
+use crate::{process_editor, post_process_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    processing::{extract_amplitudes, web::{expand_dir, FSRepr, FileCache}},
+    processing::{extract_amplitudes, viewer::{FSRepr, FileCache}},
     numass::{self, protos::rsb_event},
     dataforge::{read_df_message, DFMessage},
     home::home_dir,
@@ -25,7 +25,7 @@ use {
 use {
     eframe::web_sys::window, gloo::net::http::Request,
     wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
-    processing::web::{FSRepr, FileCache, ProcessRequest}, 
+    processing::viewer::{FSRepr, FileCache, ViewerMode}, 
     crate::worker::WebThreadPool
 };
 
@@ -54,7 +54,7 @@ pub struct DataViewerApp {
     select_single: bool,
     plot_mode: PlotMode,
     processing_status: Arc<Mutex<ProcessingStatus>>,
-    processing_params: Arc<Mutex<ProcessingParams>>,
+    processing_params: Arc<Mutex<ViewerState>>,
 
     state: Arc<Mutex<BTreeMap<String, FileCache>>>,
 
@@ -80,7 +80,7 @@ impl DataViewerApp {
             select_single: false,
             state,
             processing_status,
-            processing_params: Arc::new(Mutex::new(processing::ProcessingParams::default())),
+            processing_params: Arc::new(Mutex::new(ViewerState::default())),
             plot_mode: PlotMode::Histogram,
             #[cfg(target_arch = "wasm32")]
             thread_pool
@@ -99,7 +99,7 @@ impl DataViewerApp {
                 spawn(async move {
                     #[cfg(not(target_arch = "wasm32"))]
                     if let Some(root_path) = rfd::FileDialog::new().pick_folder() {
-                        *root.lock() = expand_dir(root_path)
+                        *root.lock() = FSRepr::expand_dir(root_path)
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
@@ -117,7 +117,7 @@ impl DataViewerApp {
                 #[cfg(not(target_arch = "wasm32"))]
                 #[allow(clippy::unnecessary_unwrap)]
                 {
-                    *self.root.lock() = expand_dir(path.unwrap());
+                    *self.root.lock() = FSRepr::expand_dir(path.unwrap());
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
@@ -193,7 +193,6 @@ impl DataViewerApp {
 
                             PlotMode::PPT => {
 
-                                // TODO: change to to_csv()
                                 let mut data = String::new();
                                 {
                                     data.push_str("path\ttime\tcounts\n");
@@ -345,13 +344,12 @@ impl DataViewerApp {
                                 let point = rsb_event::Point::parse_from_bytes(&data.unwrap()).unwrap(); // return None for bad parsing
                                 let amplitudes = Some(extract_amplitudes(
                                     &point,
-                                    &params.algorithm,
-                                    params.post_processing.convert_to_kev,
+                                    &params.process,
                                 ));
                                 
                                 if let Some(amplitudes) = amplitudes {
                         
-                                    let processed = processing::post_process(amplitudes, &processing.post_processing);
+                                    let processed = processing::post_process(amplitudes, &processing.post_process);
                                     let  histogram = processing::amplitudes_to_histogram(processed, processing.histogram);
 
                                     let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, FileCache>> = configuration_local.lock();
@@ -464,21 +462,21 @@ fn file_tree_entry(
     }
 }
 
-fn params_editor(ui: &mut Ui, ctx: &egui::Context, processing_params: ProcessingParams) -> ProcessingParams {
+fn params_editor(ui: &mut Ui, ctx: &egui::Context, state: ViewerState) -> ViewerState {
 
-    let algorithm = algorithm_editor(ui, &processing_params.algorithm);
-
-    ui.separator();
-
-    let post_processing = post_processing_editor(ui, ctx, &processing_params.post_processing);
+    let process = process_editor(ui, &state.process);
 
     ui.separator();
 
-    let histogram = histogram_params_editor(ui, &processing_params.histogram);
+    let post_process = post_process_editor(ui, ctx, &state.post_process);
 
-    ProcessingParams {
-        algorithm,
-        post_processing,
+    ui.separator();
+
+    let histogram = histogram_params_editor(ui, &state.histogram);
+
+    ViewerState {
+        process,
+        post_process,
         histogram,
     }
 }
@@ -608,8 +606,7 @@ impl eframe::App for DataViewerApp {
                     }
                 });
 
-                let algorithm = self.processing_params.lock().algorithm;
-                let convert_kev = self.processing_params.lock().post_processing.convert_to_kev;
+                let process = self.processing_params.lock().process;
 
                 if filtered_viewer_button.clicked() {
                     let (filepath, _) = opened_files[0];
@@ -619,19 +616,14 @@ impl eframe::App for DataViewerApp {
                         command.arg(filepath)
                         .arg("--min").arg(left_border.max(0.0).to_string())
                         .arg("--max").arg(right_border.max(0.0).to_string())
-                        .arg("--algorithm").arg(serde_json::to_string(&algorithm).unwrap());
-
-                        if convert_kev {
-                            command.arg("--convert-kev");
-                        }
+                        .arg("--processing").arg(serde_json::to_string(&process).unwrap());
                         
                         command.spawn().unwrap();
                     }
                     #[cfg(target_arch = "wasm32")] {
-                        let search = serde_qs::to_string(&ProcessRequest::FilterEvents {
+                        let search = serde_qs::to_string(&ViewerMode::FilterEvents {
                             filepath: PathBuf::from(filepath),
-                            algorithm,
-                            convert_kev,
+                            processing: process,
                             range: left_border.max(0.0)..right_border.max(0.0),
                             neighborhood: 5000 }).unwrap();
                         window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
@@ -659,7 +651,7 @@ impl eframe::App for DataViewerApp {
                         tokio::process::Command::new("point-viewer").arg(filepath).spawn().unwrap();
                     }
                     #[cfg(target_arch = "wasm32")] {
-                        let search = serde_qs::to_string(&ProcessRequest::SplitTimeChunks {
+                        let search = serde_qs::to_string(&ViewerMode::SplitTimeChunks {
                             filepath: PathBuf::from(filepath)
                         }).unwrap();
                         window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
