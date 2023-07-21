@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot, Points}}};
 
+use globset::GlobMatcher;
 use processing::{viewer::ViewerState, numass::{NumassMeta, Reply}};
 
 use crate::{process_editor, post_process_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    processing::{extract_amplitudes, viewer::{FSRepr, FileCache}},
+    processing::{extract_amplitudes, viewer::{FSRepr, PointState}},
     numass::{self, protos::rsb_event},
     dataforge::{read_df_message, DFMessage},
     home::home_dir,
@@ -25,7 +26,7 @@ use {
 use {
     eframe::web_sys::window, gloo::net::http::Request,
     wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
-    processing::viewer::{FSRepr, FileCache, ViewerMode}, 
+    processing::viewer::{FSRepr, PointState, ViewerMode}, 
     crate::worker::WebThreadPool
 };
 
@@ -52,11 +53,12 @@ pub struct ProcessingStatus {
 pub struct DataViewerApp {
     pub root: Arc<Mutex<Option<FSRepr>>>,
     select_single: bool,
+    glob_pattern: String,
     plot_mode: PlotMode,
     processing_status: Arc<Mutex<ProcessingStatus>>,
     processing_params: Arc<Mutex<ViewerState>>,
 
-    state: Arc<Mutex<BTreeMap<String, FileCache>>>,
+    state: Arc<Mutex<BTreeMap<String, PointState>>>,
 
     #[cfg(target_arch = "wasm32")]
     thread_pool: Arc<WebThreadPool>,
@@ -78,6 +80,7 @@ impl DataViewerApp {
         Self {
             root: Arc::new(Mutex::new(None)),
             select_single: false,
+            glob_pattern: "*/Tritium_1/set_[123]/p*(HV1=14000)".to_owned(),
             state,
             processing_status,
             processing_params: Arc::new(Mutex::new(ViewerState::default())),
@@ -91,6 +94,54 @@ impl DataViewerApp {
         let root_lock = self.root.lock().clone();
 
         ui.checkbox(&mut self.select_single, "select single");
+
+        ui.horizontal(|ui| {
+            ui.add_sized([200.0, 20.0], egui::TextEdit::singleline(&mut self.glob_pattern));
+
+            let glob = globset::Glob::new(&self.glob_pattern);
+            if ui.add_enabled(glob.is_ok(), egui::Button::new("match")).clicked() {
+
+                let glob = glob.unwrap().compile_matcher();
+
+                let root = self.root.lock().clone();
+                let state = Arc::clone(&self.state);
+
+                if let Some(root) = root {
+                    spawn(async move {
+                        let mut matched = vec![];
+    
+                        fn process_leaf(leaf: FSRepr, glob: &GlobMatcher, matched: &mut Vec<String>) {
+                            match leaf {
+                                FSRepr::File {path} => {
+                                    if glob.is_match(&path) {
+                                        matched.push(path.to_str().unwrap().to_owned())
+                                    }
+                                }
+                                FSRepr::Directory { path: _, children } => {
+                                    for child in children {
+                                        process_leaf(child, glob, matched)
+                                    }
+                                }
+                            }
+                        }
+                        process_leaf(root, &glob, &mut matched);
+    
+                        let mut state = state.lock();
+                        state.clear();
+    
+                        for path in matched {
+                            state.entry(path).or_insert(PointState { 
+                                opened: true, 
+                                meta: None, 
+                                histogram: None, 
+                                counts: None 
+                            }).opened = true;
+                        }
+                    });
+                }
+            }
+        });
+        
 
         ui.horizontal(|ui| {
             if ui.button("open").clicked() {
@@ -200,7 +251,7 @@ impl DataViewerApp {
 
                                 for (name, cache) in state_sorted.iter() {
 
-                                    if let FileCache { meta: Some(
+                                    if let PointState { meta: Some(
                                         NumassMeta::Reply(Reply::AcquirePoint {
                                             start_time, .. }) ), histogram: Some(histogram), .. } = cache {
         
@@ -235,17 +286,15 @@ impl DataViewerApp {
     
                                 for (name, cache) in state_sorted.iter() {
 
-                                    if let FileCache { meta: Some(
+                                    if let PointState { meta: Some(
                                         NumassMeta::Reply(Reply::AcquirePoint {
                                             external_meta: Some(external_meta), .. }) ), histogram: Some(histogram), .. } = cache {
                                         let voltage =  external_meta.get("HV1_value").unwrap().as_str().unwrap().parse::<f64>().unwrap();
-                                        let counts = histogram.channels.values().map(|ch| ch.iter().sum::<f32>()).sum::<f32>();
-
+                                        let counts = histogram.events_all(None);
                                         let point_name = {
                                             let temp = PathBuf::from(name);
                                             temp.file_name().unwrap().to_owned()
                                         };
-    
                                         data.push_str(&format!("{point_name:?}\t{voltage}\t{counts}\n"));
                                     }
 
@@ -314,6 +363,7 @@ impl DataViewerApp {
                 return;
             }
 
+            // TODO: move to crate::reset_status
             {
                 let mut status = status.lock();
                 status.total = files_to_processed.len();
@@ -352,29 +402,23 @@ impl DataViewerApp {
                                     let processed = processing::post_process(amplitudes, &processing.post_process);
                                     let  histogram = processing::amplitudes_to_histogram(processed, processing.histogram);
 
-                                    let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, FileCache>> = configuration_local.lock();
+                                    let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
+
+                                    let counts = Some(histogram.events_all(None));
                                     conf.insert(
                                         filepath.to_owned(),
-                                        FileCache {
+                                        PointState {
                                             opened: true,
                                             histogram: Some(histogram),
                                             meta: Some(meta),
+                                            counts
                                         },
                                     );
                                 }
                             }
-                            
-                            {
-                                let mut status = status.lock();
-                                status.processed += 1;
-                                if status.processed == status.total {
-                                    *status = ProcessingStatus {
-                                        running: false,
-                                        total: 0,
-                                        processed: 0
-                                    }
-                                }
-                            }
+                            crate::inc_status(status);
+                        } else {
+                            crate::inc_status(status);
                         }
                     }
                     #[cfg(target_arch = "wasm32")]
@@ -395,7 +439,7 @@ fn file_tree_entry(
     ui: &mut egui::Ui,
     entry: &FSRepr,
     select_single: &bool,
-    opened_files: &mut BTreeMap<String, FileCache>,
+    opened_files: &mut BTreeMap<String, PointState>,
     updated: &mut bool,
 ) {
     match entry {
@@ -403,9 +447,10 @@ fn file_tree_entry(
             let key = path.to_str().unwrap().to_string();
             let cache = opened_files
                 .entry(key.clone())
-                .or_insert(FileCache {
+                .or_insert(PointState {
                     opened: false,
                     histogram: None,
+                    counts: None,
                     meta: None,
                 });
 
@@ -527,12 +572,12 @@ impl eframe::App for DataViewerApp {
                         right_border = bounds.max()[0] as f32;
 
                         if opened_files.len() == 1 {
-                            if let (_, FileCache {opened: true, histogram: Some(hist), .. }) = opened_files[0] {
+                            if let (_, PointState {opened: true, histogram: Some(hist), .. }) = opened_files[0] {
                                 hist.draw_egui_each_channel(plot_ui, Some(thickness));
                             }
                         } else {
                             opened_files.iter().for_each(|(name, cache)| {
-                                if let FileCache {opened: true, histogram: Some(hist), .. } = cache {
+                                if let PointState {opened: true, histogram: Some(hist), .. } = cache {
                                     hist.draw_egui(plot_ui, Some(name), Some(thickness), None);
                                 }
                             })
@@ -549,12 +594,10 @@ impl eframe::App for DataViewerApp {
 
                     plot.show(ui, |plot_ui| {
                         let points = opened_files.iter().filter_map(|(_, cache)| {
-                            if let FileCache { meta: Some(
+                            if let PointState { meta: Some(
                                 NumassMeta::Reply(Reply::AcquirePoint {
-                                    start_time, .. }) ), histogram: Some(histogram), .. } = cache {
-
-                                let counts = histogram.channels.values().map(|ch| ch.iter().sum::<f32>()).sum::<f32>();
-                                Some([start_time.timestamp_millis() as f64, counts as f64])
+                                    start_time, .. }) ), counts: Some(counts), .. } = cache {
+                                Some([start_time.timestamp_millis() as f64, *counts as f64])
                             } else {
                                 None
                             }
@@ -572,12 +615,11 @@ impl eframe::App for DataViewerApp {
 
                     plot.show(ui, |plot_ui| {
                         let points = opened_files.iter().filter_map(|(_, cache)| {
-                            if let FileCache { meta: Some(
+                            if let PointState { meta: Some(
                                 NumassMeta::Reply(Reply::AcquirePoint {
-                                    external_meta: Some(external_meta), .. }) ), histogram: Some(histogram), .. } = cache {
+                                    external_meta: Some(external_meta), .. }) ), counts: Some(counts), .. } = cache {
                                 let voltage =  external_meta.get("HV1_value").unwrap().as_str().unwrap().parse::<f64>().unwrap();
-                                let counts = histogram.channels.values().map(|ch| ch.iter().sum::<f32>()).sum::<f32>();
-                                Some([voltage, counts as f64])
+                                Some([voltage, *counts as f64])
                             } else {
                                 None
                             }

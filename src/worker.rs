@@ -12,7 +12,7 @@ use serde::{Serialize, Deserialize};
 
 use processing::{
     histogram::PointHistogram, ProcessParams,
-    viewer::{FileCache, ViewerState}, 
+    viewer::{PointState, ViewerState}, 
     numass::NumassMeta
 };
 use crate::app::ProcessingStatus;
@@ -87,20 +87,8 @@ struct CachedFile {
 
 impl WebThreadPool {
 
-    fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
-        let mut status = status.lock();
-        status.processed += 1;
-        if status.processed == status.total {
-            *status = ProcessingStatus {
-                running: false,
-                total: 0,
-                processed: 0
-            }
-        }
-    }
-
     pub fn new(
-        state: Arc<Mutex<BTreeMap<String, FileCache>>>,
+        state: Arc<Mutex<BTreeMap<String, PointState>>>,
         status: Arc<Mutex<ProcessingStatus>>,
     ) -> Self {
 
@@ -128,18 +116,21 @@ impl WebThreadPool {
                             });
 
                             let mut conf = state.lock();
+                            let counts = Some(histogram.events_all(None));
+
                             conf.insert(
                                 key,
-                                FileCache {
+                                PointState {
                                     opened: true,
                                     histogram: Some(histogram),
+                                    counts,
                                     meta, // TODO: handle meta
                                 },
                             );
                         }
                     }
 
-                    WebThreadPool::inc_status(Arc::clone(&status));
+                    crate::inc_status(Arc::clone(&status));
                         
                 })
                 .spawn("./worker.js")
@@ -235,7 +226,7 @@ impl WebThreadPool {
                 state
             });
         } else {
-            WebThreadPool::inc_status(Arc::clone(&self.status));
+            crate::inc_status(Arc::clone(&self.status));
         }
     }
 }

@@ -45,7 +45,7 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
                 chunks[chunk_num].push((
                     channel.id as u8,
                     (frame.time % limit_ns) as i64,
-                    waveform.into()
+                    waveform
                 ));
             }
         }

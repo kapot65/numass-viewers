@@ -1,8 +1,9 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
-use std::path::PathBuf;
+use std::{path::PathBuf, sync::Arc};
 
-use egui::Ui;
+use app::ProcessingStatus;
+use egui::{Ui, mutex::Mutex};
 use protobuf::Message;
 
 use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams};
@@ -27,6 +28,18 @@ pub mod point_viewer;
 
 #[cfg(target_arch = "wasm32")]
 pub mod worker;
+
+pub fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
+    let mut status = status.lock();
+    status.processed += 1;
+    if status.processed == status.total {
+        *status = ProcessingStatus {
+            running: false,
+            total: 0,
+            processed: 0
+        }
+    }
+}
 
 pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> HistogramParams {
 

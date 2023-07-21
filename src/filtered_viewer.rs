@@ -384,7 +384,7 @@ impl eframe::App for FilteredViewer {
                         let position = indexes[self.current];
 
                         let ProcessedDeviceFrame { time, channels } = if self.merge {
-                            events[position].merge().to_owned()
+                            events[position].merge()
                         } else { events[position].to_owned() };
 
                         FilteredViewer::plot_processed_frame(plot_ui, channels, false, 0);
