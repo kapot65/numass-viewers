@@ -25,6 +25,7 @@ use {
 pub mod app;
 pub mod filtered_viewer;
 pub mod point_viewer;
+pub mod bundle_viewer;
 
 #[cfg(target_arch = "wasm32")]
 pub mod worker;

@@ -50,7 +50,7 @@ fn main() {
     use eframe::web_sys::window;
     use processing::viewer::ViewerMode;
     use viewers::{
-        filtered_viewer, point_viewer
+        filtered_viewer, point_viewer, bundle_viewer
     };
     use wasm_bindgen_futures::spawn_local;
 
@@ -75,7 +75,7 @@ fn main() {
     let web_runner = eframe::WebRunner::new();
     let web_options = eframe::WebOptions::default();
 
-    if let Some(ViewerMode::FilterEvents {
+    if let Some(ViewerMode::FilteredEvents {
         filepath,
         range,
         neighborhood,
@@ -99,7 +99,7 @@ fn main() {
             .await
             .expect("failed to start eframe");
         })
-    } else if let Some(ViewerMode::SplitTimeChunks { filepath }) = request {
+    } else if let Some(ViewerMode::Waveforms { filepath }) = request {
 
         set_title(filepath.to_str().unwrap());
 
@@ -114,7 +114,22 @@ fn main() {
             .await
             .expect("failed to start eframe");
         })
-    } else {
+    } else if let Some(ViewerMode::Bundles { filepath }) = request {
+
+        set_title(filepath.to_str().unwrap());
+
+        spawn_local(async move {
+            web_runner.start(
+                "the_canvas_id", // hardcode it
+                web_options,
+                Box::new(|_| {
+                    Box::new(bundle_viewer::BundleViewer::init_with_point(filepath))
+                }),
+            )
+            .await
+            .expect("failed to start eframe");
+        })
+    }else {
         spawn_local(async move {
             web_runner.start(
                 "the_canvas_id", // hardcode it

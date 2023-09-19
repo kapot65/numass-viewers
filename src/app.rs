@@ -663,7 +663,7 @@ impl eframe::App for DataViewerApp {
                         command.spawn().unwrap();
                     }
                     #[cfg(target_arch = "wasm32")] {
-                        let search = serde_qs::to_string(&ViewerMode::FilterEvents {
+                        let search = serde_qs::to_string(&ViewerMode::FilteredEvents {
                             filepath: PathBuf::from(filepath),
                             processing: process,
                             range: left_border.max(0.0)..right_border.max(0.0),
@@ -693,7 +693,30 @@ impl eframe::App for DataViewerApp {
                         tokio::process::Command::new("point-viewer").arg(filepath).spawn().unwrap();
                     }
                     #[cfg(target_arch = "wasm32")] {
-                        let search = serde_qs::to_string(&ViewerMode::SplitTimeChunks {
+                        let search = serde_qs::to_string(&ViewerMode::Waveforms {
+                            filepath: PathBuf::from(filepath)
+                        }).unwrap();
+                        window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
+                    }
+                }
+                
+                let bundle_viewer_button = ui.add_enabled(opened_files.len() == 1 && point_viewer_in_path,
+                egui::Button::new("bundles")).on_disabled_hover_ui(|ui| {
+                    if !point_viewer_in_path {
+                        ui.colored_label(Color32::RED, "bundle-viewer must be in PATH");
+                    }
+                    if opened_files.len() != 1 {
+                        ui.colored_label(Color32::RED, "exact one file must be opened");
+                    }
+                });
+
+                if bundle_viewer_button.clicked() {
+                    let (filepath, _) = opened_files[0];
+                    #[cfg(not(target_arch = "wasm32"))] {
+                        tokio::process::Command::new("bundle-viewer").arg(filepath).spawn().unwrap();
+                    }
+                    #[cfg(target_arch = "wasm32")] {
+                        let search = serde_qs::to_string(&ViewerMode::Bundles {
                             filepath: PathBuf::from(filepath)
                         }).unwrap();
                         window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
