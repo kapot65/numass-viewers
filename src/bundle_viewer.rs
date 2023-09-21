@@ -123,7 +123,7 @@ impl eframe::App for BundleViewer {
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::Slider::new(&mut self.current_chunk, 0..=chunks.len() - 1)
-                                    .suffix("00 ms")
+                                    .suffix("00 ms") // TODO: change to custom formatter
                                     .step_by(1.0),
                             );
                             if ui.button("<").clicked() && self.current_chunk > 0 {
@@ -140,7 +140,7 @@ impl eframe::App for BundleViewer {
                                 background_alpha: 1.0,
                                 position: egui::plot::Corner::RightTop,
                             })
-                            .x_axis_formatter(|value, _| format!("{} ms", value as u32 / 1_000_000))
+                            .x_axis_formatter(|value, _| format!("{:.3} ms", value))
                             .show(ui, |plot_ui| {
 
                                 let mut channel_points = BTreeMap::new();

@@ -209,9 +209,8 @@ pub async fn load_point(filepath: PathBuf) -> rsb_event::Point {
         let mut buf = Cursor::new(point_data);
         let message: DFMessage<NumassMeta> =
             read_df_message_sync::<NumassMeta>(&mut buf).unwrap();
-        let point = rsb_event::Point::parse_from_bytes(&message.data.unwrap()[..]).unwrap();
 
-        point
+        rsb_event::Point::parse_from_bytes(&message.data.unwrap()[..]).unwrap()
     }
 
     #[cfg(not(target_arch = "wasm32"))]

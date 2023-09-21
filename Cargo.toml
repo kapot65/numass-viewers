@@ -34,7 +34,7 @@ tokio = { version = "1.21.2", features = ["full"] }
 dataforge = { git = "https://bitbucket.org/Kapot/dataforge-parser-rust.git", tag = "0.1.3", features = ["tokio"]  }
 numass = { git = "https://bitbucket.org/Kapot/dataforge-parser-numass.git", tag = "0.1.2" }
 
-rfd = "0.11.1"
+rfd = "0.12.0"
 home = "0.5.4"
 which = "4.4.0"
 
@@ -51,7 +51,8 @@ wasm-bindgen = "0.2.86"
 wasm-bindgen-futures = "0.4"
 
 # gloo = { git="https://github.com/rustwasm/gloo", features = ["net", "console", "utils", "worker", "futures"] }
-gloo = { version = "0.8.1", features = ["net", "console", "utils", "worker"] }
+gloo = { version = "0.10.0", features = ["net", "console", "utils", "worker", "futures"] }
+# gloo-worker = "0.4.0"
 
 [patch."https://bitbucket.org/Kapot/dataforge-parser-numass.git"]
 numass = { path = "../dataforge-parser-numass" }

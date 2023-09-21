@@ -24,6 +24,7 @@ use {
 
 #[cfg(target_arch = "wasm32")]
 use {
+    std::rc::Rc,
     eframe::web_sys::window, gloo::net::http::Request,
     wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
     processing::viewer::{FSRepr, PointState, ViewerMode}, 
@@ -61,7 +62,7 @@ pub struct DataViewerApp {
     state: Arc<Mutex<BTreeMap<String, PointState>>>,
 
     #[cfg(target_arch = "wasm32")]
-    thread_pool: Arc<WebThreadPool>,
+    thread_pool: Rc<WebThreadPool>,
 }
 
 
@@ -73,7 +74,7 @@ impl DataViewerApp {
             running: false, total: 0, processed: 0 }));
 
         #[cfg(target_arch = "wasm32")]
-        let thread_pool = Arc::new(WebThreadPool::new(
+        let thread_pool = Rc::new(WebThreadPool::new(
             Arc::clone(&state), 
             Arc::clone(&processing_status)));
 
@@ -341,7 +342,7 @@ impl DataViewerApp {
         let status = Arc::clone(&self.processing_status);
 
         #[cfg(target_arch = "wasm32")]
-        let thread_pool = Arc::clone(&self.thread_pool);
+        let thread_pool = Rc::clone(&self.thread_pool);
 
         spawn(async move {
 
@@ -378,7 +379,7 @@ impl DataViewerApp {
                 let status = Arc::clone(&status);
 
                 #[cfg(target_arch = "wasm32")]
-                let thread_pool = Arc::clone(&thread_pool);
+                let thread_pool = Rc::clone(&thread_pool);
 
                 let processing = params.clone();
                 spawn(async move {
