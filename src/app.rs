@@ -5,19 +5,16 @@ use std::sync::Arc;
 use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot, Points}}};
 
 use globset::GlobMatcher;
-use processing::{viewer::ViewerState, numass::{NumassMeta, Reply}};
+use processing::viewer::ViewerState;
 
 use crate::{process_editor, post_process_editor, histogram_params_editor, };
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    processing::{extract_amplitudes, viewer::{FSRepr, PointState}},
-    numass::{self, protos::rsb_event},
-    dataforge::{read_df_message, DFMessage},
+    processing::viewer::{FSRepr, PointState},
     home::home_dir,
     std::fs::File,
     std::io::Write,
-    protobuf::Message,
     tokio::spawn,
     which::which,
     crate::process_point
@@ -83,7 +80,7 @@ impl DataViewerApp {
             #[cfg(target_arch = "wasm32")]
             processor_pool: {
                 let concurrency = gloo::utils::window().navigator().hardware_concurrency() as usize - 1;
-                (0..concurrency).collect::<std::vec::Vec<usize>>().into_iter().map(|_| PointProcessor::spawner().spawn("./processor.js")).collect::<Vec<_>>()
+                (0..concurrency).collect::<std::vec::Vec<usize>>().into_iter().map(|_| PointProcessor::spawner().spawn("./worker.js")).collect::<Vec<_>>()
             }
         }
     }
@@ -130,8 +127,9 @@ impl DataViewerApp {
                         for path in matched {
                             state.entry(path).or_insert(PointState { 
                                 opened: true, 
-                                meta: None, 
                                 histogram: None, 
+                                voltage: None,
+                                start_time: None,
                                 counts: None 
                             }).opened = true;
                         }
@@ -241,25 +239,19 @@ impl DataViewerApp {
                             }
 
                             PlotMode::PPT => {
-
                                 let mut data = String::new();
                                 {
                                     data.push_str("path\ttime\tcounts\n");
                                 }
 
                                 for (name, cache) in state_sorted.iter() {
-
-                                    if let PointState { meta: Some(
-                                        NumassMeta::Reply(Reply::AcquirePoint {
-                                            start_time, .. }) ), histogram: Some(histogram), .. } = cache {
-        
+                                    if let PointState { 
+                                        start_time: Some(start_time), counts: Some(counts), .. 
+                                    } = cache {
                                             let point_name = {
                                                 let temp = PathBuf::from(name);
                                                 temp.file_name().unwrap().to_owned()
                                             };
-
-                                            let counts = histogram.channels.values().map(|ch| ch.iter().sum::<f32>()).sum::<f32>();
-
                                             data.push_str(&format!("{point_name:?}\t{start_time:?}\t{counts}\n"));
                                     }
                                 }
@@ -284,11 +276,9 @@ impl DataViewerApp {
     
                                 for (name, cache) in state_sorted.iter() {
 
-                                    if let PointState { meta: Some(
-                                        NumassMeta::Reply(Reply::AcquirePoint {
-                                            external_meta: Some(external_meta), .. }) ), histogram: Some(histogram), .. } = cache {
-                                        let voltage =  external_meta.get("HV1_value").unwrap().as_str().unwrap().parse::<f64>().unwrap();
-                                        let counts = histogram.events_all(None);
+                                    if let PointState { 
+                                        counts: Some(counts), voltage: Some(voltage), .. 
+                                    } = cache {
                                         let point_name = {
                                             let temp = PathBuf::from(name);
                                             temp.file_name().unwrap().to_owned()
@@ -380,7 +370,6 @@ impl DataViewerApp {
 
             let processing = params.clone();
             spawn(async move {
-
                 #[cfg(not(target_arch = "wasm32"))]
                 let point_state = process_point(filepath.clone().into(),
                     processing.process,
@@ -397,8 +386,9 @@ impl DataViewerApp {
 
                 let point_state = point_state.unwrap_or(PointState { 
                     opened: false, 
-                    meta: None, 
                     histogram: None, 
+                    voltage: None,
+                    start_time: None,
                     counts: None 
                 });
 
@@ -435,7 +425,8 @@ fn file_tree_entry(
                     opened: false,
                     histogram: None,
                     counts: None,
-                    meta: None,
+                    voltage: None,
+                    start_time: None
                 });
 
             let mut change_set = None;
@@ -578,9 +569,7 @@ impl eframe::App for DataViewerApp {
 
                     plot.show(ui, |plot_ui| {
                         let points = opened_files.iter().filter_map(|(_, cache)| {
-                            if let PointState { meta: Some(
-                                NumassMeta::Reply(Reply::AcquirePoint {
-                                    start_time, .. }) ), counts: Some(counts), .. } = cache {
+                            if let PointState { start_time: Some(start_time), counts: Some(counts), .. } = cache {
                                 Some([start_time.timestamp_millis() as f64, *counts as f64])
                             } else {
                                 None
@@ -599,11 +588,8 @@ impl eframe::App for DataViewerApp {
 
                     plot.show(ui, |plot_ui| {
                         let points = opened_files.iter().filter_map(|(_, cache)| {
-                            if let PointState { meta: Some(
-                                NumassMeta::Reply(Reply::AcquirePoint {
-                                    external_meta: Some(external_meta), .. }) ), counts: Some(counts), .. } = cache {
-                                let voltage =  external_meta.get("HV1_value").unwrap().as_str().unwrap().parse::<f64>().unwrap();
-                                Some([voltage, *counts as f64])
+                            if let PointState { voltage: Some(voltage), counts: Some(counts), .. } = cache {
+                                Some([*voltage as f64, *counts as f64])
                             } else {
                                 None
                             }

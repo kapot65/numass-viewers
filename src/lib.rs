@@ -1,13 +1,13 @@
 #![warn(clippy::all, rust_2018_idioms)]
 
-use std::{path::PathBuf, sync::Arc};
+use std::{path::{PathBuf, Path}, sync::Arc};
 
 use app::ProcessingStatus;
 use egui::{Ui, mutex::Mutex};
-use processing::numass::NumassMeta;
+use processing::numass::{NumassMeta, Reply, ExternalMeta};
 use protobuf::Message;
 
-use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::{protos::rsb_event, self}, ProcessParams, viewer::PointState, extract_amplitudes};
+use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams, viewer::PointState, extract_amplitudes};
 
 #[cfg(target_arch = "wasm32")]
 use {
@@ -17,7 +17,10 @@ use {
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use dataforge::{read_df_message, read_df_header_and_meta};
+use {
+    processing::numass,
+    dataforge::{read_df_message, read_df_header_and_meta}
+};
 
 pub mod app;
 pub mod filtered_viewer;
@@ -37,7 +40,7 @@ pub fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
 }
 
 pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> HistogramParams {
-    
+
     ui.label("Histogram params");
     let mut min = histogram.range.start;
     ui.add(egui::Slider::new(&mut min, -10.0..=400.0).text("left"));
@@ -188,7 +191,7 @@ pub fn process_editor(ui: &mut Ui, params: &ProcessParams) -> ProcessParams {
     ProcessParams { algorithm, convert_to_kev }
 }
 
-pub async fn load_meta(filepath: &PathBuf) -> Option<NumassMeta> {
+pub async fn load_meta(filepath: &Path) -> Option<NumassMeta> {
 
     #[cfg(target_arch = "wasm32")]
     {
@@ -212,7 +215,7 @@ pub async fn load_meta(filepath: &PathBuf) -> Option<NumassMeta> {
     }
 }
 
-pub async fn load_point(filepath: &PathBuf) -> rsb_event::Point {
+pub async fn load_point(filepath: &Path) -> rsb_event::Point {
     #[cfg(target_arch = "wasm32")]
     {
         // TODO: change to gloo function when it comes out
@@ -256,7 +259,9 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
     
     let meta = load_meta(&filepath).await;
 
-    if let Some(numass::NumassMeta::Reply(numass::Reply::AcquirePoint { .. })) = meta {
+    if let Some(NumassMeta::Reply(Reply::AcquirePoint { 
+        ..
+     })) = &meta {
 
         let point = load_point(&filepath).await;
 
@@ -268,15 +273,32 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
         
         if let Some(amplitudes) = amplitudes {
             let processed = processing::post_process(amplitudes, &post_process);
-            let  histogram = processing::amplitudes_to_histogram(processed, histogram);
+            let histogram = processing::amplitudes_to_histogram(processed, histogram);
 
             let counts = Some(histogram.events_all(None));
 
+            // extract voltage from meta
+            let voltage = if let Some(NumassMeta::Reply(Reply::AcquirePoint {
+                    external_meta: Some(ExternalMeta {hv1_value: Some(voltage), ..}), .. 
+                })) = &meta {
+                        Some(*voltage)
+                } else {
+                    None
+                };
+            // extract start time from meta
+            let start_time = if let Some(NumassMeta::Reply(Reply::AcquirePoint {
+                    start_time, .. 
+                })) = &meta {
+                    Some(start_time.to_owned())
+                } else {
+                    None
+                };
+
             Some(PointState {
                 opened: true,
-                // histogram: None,
                 histogram: Some(histogram),
-                meta: None,
+                start_time,
+                voltage,
                 counts
             })
         } else {
