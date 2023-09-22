@@ -99,7 +99,7 @@ impl FilteredViewer {
 
             let mut frames: BTreeMap<u64, BTreeMap<u8, ProcessedChannel>> = BTreeMap::new();
 
-            let point = load_point(filepath).await;
+            let point = load_point(&filepath).await;
 
             for channel in &point.channels {
                 for block in &channel.blocks {

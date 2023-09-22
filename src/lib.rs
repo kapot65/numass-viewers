@@ -4,31 +4,25 @@ use std::{path::PathBuf, sync::Arc};
 
 use app::ProcessingStatus;
 use egui::{Ui, mutex::Mutex};
+use processing::numass::NumassMeta;
 use protobuf::Message;
 
-use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams};
+use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::{protos::rsb_event, self}, ProcessParams, viewer::PointState, extract_amplitudes};
 
 #[cfg(target_arch = "wasm32")]
 use {
     std::io::Cursor,
     gloo::net::http::Request,
     dataforge::{read_df_message_sync, DFMessage},
-    processing::numass::NumassMeta
 };
 
 #[cfg(not(target_arch = "wasm32"))]
-use {
-    dataforge::read_df_message,
-    processing::numass,
-};
+use dataforge::{read_df_message, read_df_header_and_meta};
 
 pub mod app;
 pub mod filtered_viewer;
 pub mod point_viewer;
 pub mod bundle_viewer;
-
-#[cfg(target_arch = "wasm32")]
-pub mod worker;
 
 pub fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
     let mut status = status.lock();
@@ -43,9 +37,8 @@ pub fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
 }
 
 pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> HistogramParams {
-
+    
     ui.label("Histogram params");
-
     let mut min = histogram.range.start;
     ui.add(egui::Slider::new(&mut min, -10.0..=400.0).text("left"));
     let mut max = histogram.range.end;
@@ -195,10 +188,36 @@ pub fn process_editor(ui: &mut Ui, params: &ProcessParams) -> ProcessParams {
     ProcessParams { algorithm, convert_to_kev }
 }
 
-pub async fn load_point(filepath: PathBuf) -> rsb_event::Point {
+pub async fn load_meta(filepath: &PathBuf) -> Option<NumassMeta> {
+
     #[cfg(target_arch = "wasm32")]
     {
-        let point_data = Request::get(&format!("/files{}", filepath.to_str().unwrap()))
+        // TODO: change to gloo function when it comes out
+        let base_url = js_sys::eval("String(new URL(self.location.href).origin)").unwrap().as_string().unwrap();
+
+        Request::get(&format!("{base_url}/api/meta{}", filepath.to_str().unwrap()))
+            .send()
+            .await
+            .unwrap()
+            .json::<Option<NumassMeta>>()
+            .await
+            .unwrap()
+    }
+
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        let mut point_file = tokio::fs::File::open(&filepath).await.unwrap();
+        read_df_header_and_meta::<numass::NumassMeta>(&mut point_file).await.map_or(
+            None, |(_, meta)| Some(meta))
+    }
+}
+
+pub async fn load_point(filepath: &PathBuf) -> rsb_event::Point {
+    #[cfg(target_arch = "wasm32")]
+    {
+        // TODO: change to gloo function when it comes out
+        let base_url = js_sys::eval("String(new URL(self.location.href).origin)").unwrap().as_string().unwrap();
+        let point_data = Request::get(&format!("{base_url}/files{}", filepath.to_str().unwrap()))
             .send()
             .await
             .unwrap()
@@ -220,5 +239,50 @@ pub async fn load_point(filepath: PathBuf) -> rsb_event::Point {
             .await
             .unwrap();
         rsb_event::Point::parse_from_bytes(&message.data.unwrap()[..]).unwrap()
+    }
+}
+
+#[cfg(target_arch = "wasm32")]
+use gloo::worker::oneshot::oneshot;
+
+#[cfg(target_arch = "wasm32")]
+#[oneshot]
+pub async fn PointProcessor(args: (PathBuf, ProcessParams, PostProcessParams, HistogramParams)) -> Option<PointState> {
+    let (filepath, process, post_process, histogram) = args;
+    process_point(filepath, process, post_process, histogram).await
+}
+
+pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_process: PostProcessParams, histogram: HistogramParams) -> Option<PointState> {
+    
+    let meta = load_meta(&filepath).await;
+
+    if let Some(numass::NumassMeta::Reply(numass::Reply::AcquirePoint { .. })) = meta {
+
+        let point = load_point(&filepath).await;
+
+        // implement caching
+        let amplitudes = Some(extract_amplitudes(
+            &point,
+            &process,
+        ));
+        
+        if let Some(amplitudes) = amplitudes {
+            let processed = processing::post_process(amplitudes, &post_process);
+            let  histogram = processing::amplitudes_to_histogram(processed, histogram);
+
+            let counts = Some(histogram.events_all(None));
+
+            Some(PointState {
+                opened: true,
+                // histogram: None,
+                histogram: Some(histogram),
+                meta: None,
+                counts
+            })
+        } else {
+            None
+        }
+    } else {
+        None
     }
 }

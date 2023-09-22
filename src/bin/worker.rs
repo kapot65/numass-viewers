@@ -1,4 +1,3 @@
-
 #[cfg(not(target_arch = "wasm32"))]
 fn main() {
     panic!("this binary is not meant to be run on desktop")
@@ -6,8 +5,7 @@ fn main() {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use gloo::worker::Registrable;
-    use viewers::worker::WebWorker;
-
+    use viewers::PointProcessor;
     console_error_panic_hook::set_once();
-    WebWorker::registrar().register();
+    PointProcessor::registrar().register();
 }

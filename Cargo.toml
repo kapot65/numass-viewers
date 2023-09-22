@@ -50,10 +50,8 @@ dataforge = { git = "https://bitbucket.org/Kapot/dataforge-parser-rust.git", tag
 wasm-bindgen = "0.2.86"
 wasm-bindgen-futures = "0.4"
 
-# gloo = { git="https://github.com/rustwasm/gloo", features = ["net", "console", "utils", "worker", "futures"] }
+js-sys = "0.3.52"
 gloo = { version = "0.10.0", features = ["net", "console", "utils", "worker", "futures"] }
-# gloo-worker = "0.4.0"
-
 [patch."https://bitbucket.org/Kapot/dataforge-parser-numass.git"]
 numass = { path = "../dataforge-parser-numass" }
 

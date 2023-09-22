@@ -7,7 +7,7 @@ use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot
 use globset::GlobMatcher;
 use processing::{viewer::ViewerState, numass::{NumassMeta, Reply}};
 
-use crate::{process_editor, post_process_editor, histogram_params_editor};
+use crate::{process_editor, post_process_editor, histogram_params_editor, };
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -20,15 +20,15 @@ use {
     protobuf::Message,
     tokio::spawn,
     which::which,
+    crate::process_point
 };
 
 #[cfg(target_arch = "wasm32")]
 use {
-    std::rc::Rc,
-    eframe::web_sys::window, gloo::net::http::Request,
+    eframe::web_sys::window, gloo::{net::http::Request, worker::{Spawnable, oneshot::OneshotBridge}},
     wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
     processing::viewer::{FSRepr, PointState, ViewerMode}, 
-    crate::worker::WebThreadPool
+    crate::PointProcessor
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -62,9 +62,8 @@ pub struct DataViewerApp {
     state: Arc<Mutex<BTreeMap<String, PointState>>>,
 
     #[cfg(target_arch = "wasm32")]
-    thread_pool: Rc<WebThreadPool>,
+    processor_pool: Vec<OneshotBridge<PointProcessor>>
 }
-
 
 impl DataViewerApp {
     pub fn new() -> Self {
@@ -72,11 +71,6 @@ impl DataViewerApp {
         let state = Arc::new(Mutex::new(BTreeMap::new()));
         let processing_status = Arc::new(Mutex::new(ProcessingStatus { 
             running: false, total: 0, processed: 0 }));
-
-        #[cfg(target_arch = "wasm32")]
-        let thread_pool = Rc::new(WebThreadPool::new(
-            Arc::clone(&state), 
-            Arc::clone(&processing_status)));
 
         Self {
             root: Arc::new(Mutex::new(None)),
@@ -87,7 +81,10 @@ impl DataViewerApp {
             processing_params: Arc::new(Mutex::new(ViewerState::default())),
             plot_mode: PlotMode::Histogram,
             #[cfg(target_arch = "wasm32")]
-            thread_pool
+            processor_pool: {
+                let concurrency = gloo::utils::window().navigator().hardware_concurrency() as usize - 1;
+                (0..concurrency).collect::<std::vec::Vec<usize>>().into_iter().map(|_| PointProcessor::spawner().spawn("./processor.js")).collect::<Vec<_>>()
+            }
         }
     }
 
@@ -341,92 +338,78 @@ impl DataViewerApp {
         let state = Arc::clone(&self.state);
         let status = Arc::clone(&self.processing_status);
 
-        #[cfg(target_arch = "wasm32")]
-        let thread_pool = Rc::clone(&self.thread_pool);
+        let files_to_processed = {
+            state
+                .lock()
+                .iter()
+                .filter_map(|(filepath, cache)| {
+                    if cache.opened {
+                        Some(filepath.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+        };
 
-        spawn(async move {
+        if files_to_processed.is_empty() {
+            return;
+        }
 
-            let files_to_processed = {
-                state
-                    .lock()
-                    .iter()
-                    .filter_map(|(filepath, cache)| {
-                        if cache.opened {
-                            Some(filepath.clone())
-                        } else {
-                            None
-                        }
-                    })
-                    .collect::<Vec<_>>()
+        // TODO: move to crate::reset_status
+        {
+            let mut status = status.lock();
+            status.total = files_to_processed.len();
+            status.processed = 0;
+            status.running = true
+        }
+
+        for filepath in files_to_processed {
+            let configuration_local = state.clone();
+            let status = Arc::clone(&status);
+
+            // get random worker from pool
+            #[cfg(target_arch = "wasm32")] 
+            let mut point_processor = {
+                let concurrency = self.processor_pool.len();
+                let worker_num = js_sys::eval(
+                    format!("Math.floor( Math.random() * {concurrency})").as_str())
+                    .unwrap().as_f64().unwrap() as usize;
+                self.processor_pool[worker_num].fork()
             };
 
-            if files_to_processed.is_empty() {
-                return;
-            }
+            let processing = params.clone();
+            spawn(async move {
 
-            // TODO: move to crate::reset_status
-            {
-                let mut status = status.lock();
-                status.total = files_to_processed.len();
-                status.processed = 0;
-                status.running = true
-            }
-
-            for filepath in files_to_processed {
                 #[cfg(not(target_arch = "wasm32"))]
-                let configuration_local = state.clone();
-                #[cfg(not(target_arch = "wasm32"))]
-                let status = Arc::clone(&status);
-
+                let point_state = process_point(filepath.clone().into(),
+                    processing.process,
+                    processing.post_process,
+                    processing.histogram
+                ).await;
                 #[cfg(target_arch = "wasm32")]
-                let thread_pool = Rc::clone(&thread_pool);
+                let point_state = point_processor.run((
+                    filepath.clone().into(),
+                    processing.process,
+                    processing.post_process,
+                    processing.histogram
+                )).await;
 
-                let processing = params.clone();
-                spawn(async move {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    {
-                        let mut point_file = tokio::fs::File::open(&filepath).await.unwrap();
-                        if let Ok(DFMessage {
-                            meta,
-                            data,
-                        }) = read_df_message::<numass::NumassMeta>(&mut point_file).await {
-
-                            if let numass::NumassMeta::Reply(numass::Reply::AcquirePoint { .. }) = meta.clone() {
-                                let point = rsb_event::Point::parse_from_bytes(&data.unwrap()).unwrap(); // return None for bad parsing
-                                let amplitudes = Some(extract_amplitudes(
-                                    &point,
-                                    &params.process,
-                                ));
-                                
-                                if let Some(amplitudes) = amplitudes {
-                        
-                                    let processed = processing::post_process(amplitudes, &processing.post_process);
-                                    let  histogram = processing::amplitudes_to_histogram(processed, processing.histogram);
-
-                                    let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
-
-                                    let counts = Some(histogram.events_all(None));
-                                    conf.insert(
-                                        filepath.to_owned(),
-                                        PointState {
-                                            opened: true,
-                                            histogram: Some(histogram),
-                                            meta: Some(meta),
-                                            counts
-                                        },
-                                    );
-                                }
-                            }
-                            crate::inc_status(status);
-                        } else {
-                            crate::inc_status(status);
-                        }
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    thread_pool.process_point(filepath, processing).await;
+                let point_state = point_state.unwrap_or(PointState { 
+                    opened: false, 
+                    meta: None, 
+                    histogram: None, 
+                    counts: None 
                 });
-            }
-        });
+
+                let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
+                conf.insert(
+                    filepath.to_owned(),
+                    point_state,
+                );
+                crate::inc_status(status);
+            });
+        }
     }
 }
 

@@ -67,7 +67,7 @@ impl PointViewer {
         let state = Arc::clone(&viewer.state);
         
         spawn(async move {
-            let point = load_point(filepath).await;
+            let point = load_point(&filepath).await;
             *chunks.lock() = Some(point_to_chunks(point, 1_000_000));
             *state.lock() = AppState::FirstLoad;
         });
