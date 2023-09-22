@@ -23,6 +23,7 @@ use {
 };
 
 pub mod app;
+pub mod hyperlink;
 pub mod filtered_viewer;
 pub mod point_viewer;
 pub mod bundle_viewer;
@@ -191,14 +192,18 @@ pub fn process_editor(ui: &mut Ui, params: &ProcessParams) -> ProcessParams {
     ProcessParams { algorithm, convert_to_kev }
 }
 
+#[cfg(target_arch = "wasm32")]
+pub fn api_url(prefix: &str, filepath: &Path) -> String {
+    // TODO: change to gloo function when it comes out
+    let base_url = js_sys::eval("String(new URL(self.location.href).origin)").unwrap().as_string().unwrap();
+    format!("{base_url}/{prefix}{}", filepath.to_str().unwrap())
+}
+
 pub async fn load_meta(filepath: &Path) -> Option<NumassMeta> {
 
     #[cfg(target_arch = "wasm32")]
     {
-        // TODO: change to gloo function when it comes out
-        let base_url = js_sys::eval("String(new URL(self.location.href).origin)").unwrap().as_string().unwrap();
-
-        Request::get(&format!("{base_url}/api/meta{}", filepath.to_str().unwrap()))
+        Request::get(&api_url("api/meta", filepath))
             .send()
             .await
             .unwrap()
@@ -218,9 +223,7 @@ pub async fn load_meta(filepath: &Path) -> Option<NumassMeta> {
 pub async fn load_point(filepath: &Path) -> rsb_event::Point {
     #[cfg(target_arch = "wasm32")]
     {
-        // TODO: change to gloo function when it comes out
-        let base_url = js_sys::eval("String(new URL(self.location.href).origin)").unwrap().as_string().unwrap();
-        let point_data = Request::get(&format!("{base_url}/files{}", filepath.to_str().unwrap()))
+        let point_data = Request::get(&api_url("files", filepath))
             .send()
             .await
             .unwrap()

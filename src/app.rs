@@ -7,7 +7,7 @@ use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot
 use globset::GlobMatcher;
 use processing::viewer::ViewerState;
 
-use crate::{process_editor, post_process_editor, histogram_params_editor, };
+use crate::{process_editor, post_process_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -25,7 +25,7 @@ use {
     eframe::web_sys::window, gloo::{net::http::Request, worker::{Spawnable, oneshot::OneshotBridge}},
     wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
     processing::viewer::{FSRepr, PointState, ViewerMode}, 
-    crate::PointProcessor
+    crate::{PointProcessor, api_url, hyperlink::HyperlinkNewWindow}
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -214,7 +214,6 @@ impl DataViewerApp {
                         };
 
                         match plot_mode {
-
                             PlotMode::Histogram => {
                                 for (name, cache) in state_sorted.iter() {
                                     if let Some(histogram) = &cache.histogram {
@@ -237,7 +236,6 @@ impl DataViewerApp {
                                     }
                                 }
                             }
-
                             PlotMode::PPT => {
                                 let mut data = String::new();
                                 {
@@ -446,7 +444,13 @@ fn file_tree_entry(
                 }
 
                 let filename = path.file_name().unwrap().to_str().unwrap();
+
+                #[cfg(not(target_arch = "wasm32"))]
                 ui.label(filename);
+                #[cfg(target_arch = "wasm32")] {
+                    let hyperlink = HyperlinkNewWindow::new(filename, api_url("api/meta", path));
+                    ui.add(hyperlink);
+                }
             });
 
             if let Some(point) = exclusive_point {
