@@ -1,7 +1,7 @@
 use std::{sync::Arc, path::PathBuf, collections::BTreeMap};
 
 use egui::{mutex::Mutex, plot::Points};
-use processing::{color_for_index, numass::protos::rsb_event, ProcessParams, PostProcessParams, post_process_events, extract_events};
+use processing::{color_for_index, numass::protos::rsb_event, ProcessParams, PostProcessParams, post_process, extract_events};
 
 use crate::load_point;
 
@@ -28,7 +28,7 @@ pub struct BundleViewer {
 
 fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
 
-    let frames = post_process_events(
+    let frames = post_process(
         extract_events(&point, &ProcessParams::default()), 
         &PostProcessParams::default()
     );

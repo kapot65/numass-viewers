@@ -4,10 +4,10 @@ use std::{path::{PathBuf, Path}, sync::Arc};
 
 use app::ProcessingStatus;
 use egui::{Ui, mutex::Mutex};
-use processing::numass::{NumassMeta, Reply, ExternalMeta};
+use processing::{numass::{NumassMeta, Reply, ExternalMeta}, events_to_histogram};
 use protobuf::Message;
 
-use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams, viewer::PointState, extract_amplitudes};
+use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams, viewer::PointState, extract_events};
 
 #[cfg(target_arch = "wasm32")]
 use {
@@ -269,14 +269,14 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
         let point = load_point(&filepath).await;
 
         // implement caching
-        let amplitudes = Some(extract_amplitudes(
+        let amplitudes = Some(extract_events(
             &point,
             &process,
         ));
         
         if let Some(amplitudes) = amplitudes {
             let processed = processing::post_process(amplitudes, &post_process);
-            let histogram = processing::amplitudes_to_histogram(processed, histogram);
+            let histogram = events_to_histogram(processed, histogram);
 
             let counts = Some(histogram.events_all(None));
 
