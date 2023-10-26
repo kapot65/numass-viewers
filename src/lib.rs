@@ -7,18 +7,18 @@ use egui::{Ui, mutex::Mutex};
 use processing::{numass::{NumassMeta, Reply, ExternalMeta}, events_to_histogram};
 use protobuf::Message;
 
-use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams, viewer::PointState, extract_events};
+use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numass::protos::rsb_event, ProcessParams, viewer::PointState};
 
 #[cfg(target_arch = "wasm32")]
 use {
-    std::io::Cursor,
+    std::{io::Cursor, collections::BTreeMap},
     gloo::net::http::Request,
     dataforge::{read_df_message_sync, DFMessage},
 };
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    processing::numass,
+    processing::{numass, extract_events},
     dataforge::{read_df_message, read_df_header_and_meta}
 };
 
@@ -266,13 +266,29 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
         ..
      })) = &meta {
 
-        let point = load_point(&filepath).await;
+        
+        #[cfg(not(target_arch = "wasm32"))]
+        let amplitudes = {
+            let point = load_point(&filepath).await;
+            Some(extract_events(
+                &point,
+                &process,
+            ))
+        };
 
-        // implement caching
-        let amplitudes = Some(extract_events(
-            &point,
-            &process,
-        ));
+        #[cfg(target_arch = "wasm32")]
+        let amplitudes = {
+            let amplitudes_raw = Request::post(&api_url("api/process", &filepath))
+                    .json(&process).unwrap()
+                    .send()
+                    .await
+                    .unwrap()
+                    .binary()
+                    .await
+                    .unwrap();
+            rmp_serde::from_slice::<Option<BTreeMap<u64, BTreeMap<usize, (u16, f32)>>>>(&amplitudes_raw).unwrap()
+        };
+
         
         if let Some(amplitudes) = amplitudes {
             let processed = processing::post_process(amplitudes, &post_process);
