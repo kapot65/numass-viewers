@@ -11,9 +11,10 @@ use processing::{histogram::HistogramParams, PostProcessParams, Algorithm, numas
 
 #[cfg(target_arch = "wasm32")]
 use {
-    std::{io::Cursor, collections::BTreeMap},
+    std::io::Cursor,
     gloo::net::http::Request,
     dataforge::{read_df_message_sync, DFMessage},
+    processing::NumassAmps
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -286,7 +287,7 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
                     .binary()
                     .await
                     .unwrap();
-            rmp_serde::from_slice::<Option<BTreeMap<u64, BTreeMap<usize, (u16, f32)>>>>(&amplitudes_raw).unwrap()
+            rmp_serde::from_slice::<Option<NumassAmps>>(&amplitudes_raw).unwrap()
         };
 
         
