@@ -162,6 +162,16 @@ pub fn process_editor(ui: &mut Ui, params: &ProcessParams) -> ProcessParams {
         {
             algorithm = Algorithm::FirstPeak { threshold: 10, left: 8 }
         }
+
+        if ui
+            .add(egui::RadioButton::new(
+                matches!(algorithm, Algorithm::Trapezoid { .. }),
+                "Trapezoid",
+            ))
+            .clicked()
+        {
+            algorithm = Algorithm::Trapezoid { left: 6, center: 0, right: 6 }
+        }
     });
 
     let algorithm = match algorithm {
@@ -184,6 +194,20 @@ pub fn process_editor(ui: &mut Ui, params: &ProcessParams) -> ProcessParams {
             let mut threshold = threshold;
             ui.add(egui::Slider::new(&mut threshold, 0..=400).text("threshold"));
             Algorithm::FirstPeak { threshold, left }
+        }
+
+        Algorithm::Trapezoid { left, center, right } => {
+
+            let mut left = left;
+            ui.add(egui::Slider::new(&mut left, 0..=32).text("left"));
+
+            let mut center = center;
+            ui.add(egui::Slider::new(&mut center, 0..=32).text("center"));
+
+            let mut right = right;
+            ui.add(egui::Slider::new(&mut right, 0..=32).text("right"));
+
+            Algorithm::Trapezoid { left, center, right}
         }
     };
 
