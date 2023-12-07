@@ -269,7 +269,7 @@ pub async fn load_point(filepath: &Path) -> rsb_event::Point {
         let message = read_df_message::<numass::NumassMeta>(&mut point_file)
             .await
             .unwrap();
-        rsb_event::Point::parse_from_bytes(&message.data.unwrap()[..]).unwrap()
+        rsb_event::Point::parse_from_bytes(&message.data.unwrap_or(vec![])[..]).unwrap()
     }
 }
 
