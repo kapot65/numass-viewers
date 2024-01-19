@@ -1,9 +1,13 @@
 use std::{sync::Arc, path::PathBuf};
 
 use egui::mutex::Mutex;
-use processing::{color_for_index, ProcessedWaveform, numass::protos::rsb_event, process_waveform, EguiLine};
-
-use crate::load_point;
+use processing::{
+    utils::{color_for_index, EguiLine}, 
+    types::ProcessedWaveform, 
+    numass::protos::rsb_event, 
+    process::process_waveform,
+    storage::load_point 
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;

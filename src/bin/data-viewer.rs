@@ -6,7 +6,7 @@ use viewers::app;
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
-    use processing::viewer::FSRepr;
+    use processing::storage::FSRepr;
     use {clap::Parser, std::path::PathBuf};
 
     #[derive(Parser, Debug)]

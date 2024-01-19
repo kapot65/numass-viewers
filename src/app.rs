@@ -7,11 +7,11 @@ use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot
 use globset::GlobMatcher;
 use processing::viewer::ViewerState;
 
-use crate::{process_editor, post_process_editor, histogram_params_editor};
+use crate::widgets::{process_editor, post_process_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    processing::viewer::{FSRepr, PointState},
+    processing::{storage::FSRepr, viewer::PointState},
     home::home_dir,
     std::fs::File,
     std::io::Write,
@@ -24,8 +24,8 @@ use {
 use {
     eframe::web_sys::window, gloo::{net::http::Request, worker::{Spawnable, oneshot::OneshotBridge}},
     wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
-    processing::viewer::{FSRepr, PointState, ViewerMode}, 
-    crate::{PointProcessor, api_url, hyperlink::HyperlinkNewWindow}
+    processing::{viewer::{PointState, ViewerMode}, storage::{FSRepr, api_url}}, 
+    crate::{PointProcessor, hyperlink::HyperlinkNewWindow}
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -622,7 +622,7 @@ impl eframe::App for DataViewerApp {
                     }
                 });
 
-                let process = self.processing_params.lock().process;
+                let process = self.processing_params.lock().process.clone();
 
                 if filtered_viewer_button.clicked() {
                     let (filepath, _) = opened_files[0];

@@ -4,8 +4,12 @@ use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
 use serde::Serialize;
 use serde_json::json;
 
-use processing::{convert_to_kev, ProcessedWaveform, process_waveform, waveform_to_events, color_for_index, EguiLine, ProcessParams};
-use crate::{process_editor, load_point};
+use processing::{
+    process::{convert_to_kev, process_waveform, waveform_to_events, ProcessParams}, 
+    types::ProcessedWaveform, utils::{color_for_index, EguiLine}, 
+    storage::load_point 
+};
+use crate::widgets::process_editor;
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -132,7 +136,7 @@ impl FilteredViewer {
 
         let indexes = Arc::clone(&self.indexes);
         let events: Arc<Mutex<Option<Vec<ProcessedDeviceFrame>>>> = Arc::clone(&self.events);
-        let processing = self.processing;
+        let processing = self.processing.clone();
         let range = self.range.clone();
 
         self.current = 0;

@@ -36,7 +36,7 @@ async fn main() {
     let processing = if let Some(processing) = args.processing {
         serde_json::from_str(&processing).expect("cant parse algorithm param")
     } else {
-        processing::ProcessParams::default()
+        processing::process::ProcessParams::default()
     };
 
     let native_options = eframe::NativeOptions::default();

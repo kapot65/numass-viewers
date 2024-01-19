@@ -1,9 +1,12 @@
 use std::{sync::Arc, path::PathBuf, collections::BTreeMap};
 
 use egui::{mutex::Mutex, plot::Points};
-use processing::{color_for_index, numass::protos::rsb_event, ProcessParams, PostProcessParams, post_process, extract_events};
-
-use crate::load_point;
+use processing::{
+    utils::color_for_index, 
+    numass::protos::rsb_event, process::{ProcessParams, extract_events}, 
+    postprocess::{PostProcessParams, post_process},
+    storage::load_point
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
