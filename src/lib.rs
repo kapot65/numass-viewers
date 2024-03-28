@@ -44,6 +44,8 @@ pub async fn PointProcessor(args: (PathBuf, ProcessParams, PostProcessParams, Hi
 
 pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_process: PostProcessParams, histogram: HistogramParams) -> Option<PointState> {
     
+    let modified = processing::storage::load_modified_time(filepath.clone()).await; // TODO: remove clone
+
     let events = processing::storage::process_point(&filepath, &process).await;
 
     events.map(|(meta, events)| {
@@ -78,6 +80,7 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
                 histogram: Some(histogram),
                 start_time,
                 voltage,
+                modified,
                 counts
             }
         } else {
@@ -86,6 +89,7 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
                 histogram: None,
                 start_time: None,
                 voltage: None,
+                modified: None,
                 counts: None
             }
         }

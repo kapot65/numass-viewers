@@ -130,7 +130,8 @@ impl DataViewerApp {
                                 histogram: None, 
                                 voltage: None,
                                 start_time: None,
-                                counts: None 
+                                counts: None,
+                                modified: None
                             }).opened = true;
                         }
                     });
@@ -368,6 +369,17 @@ impl DataViewerApp {
 
             let processing = params.clone();
             spawn(async move {
+                let modified = processing::storage::load_modified_time(filepath.clone().into()).await;
+                if let Some(modified) = modified {
+                    let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
+                    if let Some(&PointState { modified: Some(modified_2), .. }) = conf.get(&filepath) {
+                        if modified <= modified_2 {
+                            crate::inc_status(status);
+                            return;
+                        }
+                    }
+                }
+
                 #[cfg(not(target_arch = "wasm32"))]
                 let point_state = process_point(filepath.clone().into(),
                     processing.process,
@@ -387,6 +399,7 @@ impl DataViewerApp {
                     histogram: None, 
                     voltage: None,
                     start_time: None,
+                    modified: None,
                     counts: None 
                 });
 
@@ -424,6 +437,7 @@ fn file_tree_entry(
                     histogram: None,
                     counts: None,
                     voltage: None,
+                    modified: None,
                     start_time: None
                 });
 
