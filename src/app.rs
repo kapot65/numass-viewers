@@ -323,6 +323,10 @@ impl DataViewerApp {
     }
 
     pub fn process(&self) {
+
+        let changed = self.processing_params.lock().changed;
+        self.processing_params.lock().changed = false;
+
         let params = self.processing_params.lock().clone();
         let state = Arc::clone(&self.state);
         let status = Arc::clone(&self.processing_status);
@@ -371,9 +375,9 @@ impl DataViewerApp {
             spawn(async move {
                 let modified = processing::storage::load_modified_time(filepath.clone().into()).await;
                 if let Some(modified) = modified {
-                    let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
+                    let conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
                     if let Some(&PointState { modified: Some(modified_2), .. }) = conf.get(&filepath) {
-                        if modified <= modified_2 {
+                        if !changed && modified <= modified_2 {
                             crate::inc_status(status);
                             return;
                         }
@@ -511,11 +515,18 @@ fn params_editor(ui: &mut Ui, ctx: &egui::Context, state: ViewerState) -> Viewer
     ui.separator();
 
     let histogram = histogram_params_editor(ui, &state.histogram);
+    
+    let changed = state.changed || (
+        process != state.process || 
+        post_process != state.post_process ||
+        histogram != state.histogram
+    );
 
     ViewerState {
         process,
         post_process,
         histogram,
+        changed
     }
 }
 
