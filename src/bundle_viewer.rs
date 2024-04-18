@@ -40,20 +40,21 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
     chunks.push(vec![]);
 
     for (time, frame) in frames {
-        for (ch_num, (offset, amp)) in frame {
+        for (ch_num, events) in frame {
+            for (offset, amp) in events {
+                let time = time + offset as u64;
+                let chunk_num = (time / limit_ns) as usize;
+                    
+                while chunks.len() < chunk_num + 1 {
+                    chunks.push(vec![])
+                }
 
-            let time = time + offset as u64;
-            let chunk_num = (time / limit_ns) as usize;
-                
-            while chunks.len() < chunk_num + 1 {
-                chunks.push(vec![])
+                chunks[chunk_num].push((
+                    ch_num as u8,
+                    (time % limit_ns) as i64,
+                    amp
+                ));
             }
-
-            chunks[chunk_num].push((
-                ch_num as u8,
-                (time % limit_ns) as i64,
-                amp
-            ));
         }
     }
 

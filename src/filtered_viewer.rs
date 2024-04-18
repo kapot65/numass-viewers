@@ -1,21 +1,14 @@
-use std::{ops::Range, path::PathBuf, sync::Arc, collections::BTreeMap};
+use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc, vec};
 
 use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
-use serde::Serialize;
-use serde_json::json;
 
 use processing::{
-    process::{convert_to_kev, process_waveform, waveform_to_events, ProcessParams}, 
-    types::ProcessedWaveform, utils::{color_for_index, EguiLine}, 
-    storage::load_point 
+    process::{convert_to_kev, extract_waveforms, waveform_to_events, ProcessParams}, storage::load_point, types::{NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
 };
 use crate::widgets::process_editor;
 
 #[cfg(not(target_arch = "wasm32"))]
-use {
-    tokio::spawn,
-    home::home_dir,
-};
+use tokio::spawn;
 
 #[cfg(target_arch = "wasm32")]
 use {
@@ -28,35 +21,6 @@ extern "C" {
     fn download(filename: &str, text: &str);
 }
 
-#[derive(Debug, Clone, Serialize)]
-struct ProcessedChannel {
-    waveform: ProcessedWaveform,
-    peaks: Option<Vec<[f64; 2]>>
-}
-
-#[derive(Debug, Clone, Serialize)]
-struct ProcessedDeviceFrame {
-    pub time: u64,
-    pub channels: BTreeMap<u8, ProcessedChannel>
-}
-
-impl ProcessedDeviceFrame {
-    pub fn merge(&self) -> Self {
-        let mut merged = ProcessedWaveform(vec![0.0; self.channels.first_key_value().unwrap().1.waveform.0.len()]);
-        
-        self.channels.iter().for_each(|(_, channel)| {
-            channel.waveform.0.iter().enumerate().for_each(|(j, value)| {
-                merged.0[j] += value;
-            })
-        });
-
-        let mut channels = BTreeMap::new();
-        channels.insert(5u8, ProcessedChannel { waveform: merged, peaks: None});
-
-        Self { time: self.time, channels }
-    }
-}
-
 #[derive(Debug, Clone)]
 enum AppState {
     Initializing,
@@ -65,15 +29,13 @@ enum AppState {
 }
 
 pub struct FilteredViewer {
-    filepath: PathBuf,
     processing: ProcessParams,
     range: Range<f32>,
     neighborhood: usize,
-    events: Arc<Mutex<Option<Vec<ProcessedDeviceFrame>>>>,
-    indexes: Arc<Mutex<Option<Vec<usize>>>>,
+    waveforms: Arc<Mutex<Option<NumassWaveforms>>>,
+    indexes: Arc<Mutex<Option<Vec<u64>>>>,
     state: Arc<Mutex<AppState>>,
     current: usize,
-    merge: bool
 }
 
 impl FilteredViewer {
@@ -85,121 +47,99 @@ impl FilteredViewer {
     ) -> Self {
 
         let viewer = Self {
-            filepath: filepath.clone(),
             processing,
             range,
             neighborhood,
-            events: Arc::new(Mutex::new(None)),
+            waveforms: Arc::new(Mutex::new(None)),
             indexes: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(AppState::Initializing)),
             current: 0,
-            merge: false
         };
 
-        let events = Arc::clone(&viewer.events);
+        let waveforms = Arc::clone(&viewer.waveforms);
         let state = Arc::clone(&viewer.state);
 
         spawn(async move {
-
-            let mut frames: BTreeMap<u64, BTreeMap<u8, ProcessedChannel>> = BTreeMap::new();
-
             let point = load_point(&filepath).await;
+            let loaded_waveforms: BTreeMap<u64, BTreeMap<usize, ProcessedWaveform>> = extract_waveforms(&point);
 
-            for channel in &point.channels {
-                for block in &channel.blocks {
-                    for frame in &block.frames {
-                        let entry = frames.entry(frame.time).or_default();
-                        entry.insert(channel.id as u8, ProcessedChannel { 
-                            waveform: process_waveform(frame), 
-                            peaks: None
-                        });
-                    }
-                }
-            }
-
-            {
-                *events.lock() = Some(frames.iter().map(|(time, frame)| {
-                    ProcessedDeviceFrame {
-                        time: *time,
-                        channels: frame.clone()
-                    }
-                }).collect::<Vec<_>>());
-
-                *state.lock() = AppState::FirstLoad;
-            }
+            *waveforms.lock() = Some(loaded_waveforms);
+            *state.lock() = AppState::FirstLoad;
         });
 
         viewer
     }
 
     fn update_indexes(&mut self) {
+        // TODO: avoid cloning
 
         let indexes = Arc::clone(&self.indexes);
-        let events: Arc<Mutex<Option<Vec<ProcessedDeviceFrame>>>> = Arc::clone(&self.events);
+        let waveforms = Arc::clone(&self.waveforms);
         let processing = self.processing.clone();
         let range = self.range.clone();
 
         self.current = 0;
 
         spawn(async move {
-            if let Some(events) = events.lock().as_mut() { 
-                events.iter_mut().for_each(|ProcessedDeviceFrame { channels, .. }| {
-                    channels.iter_mut().for_each(|(ch_id, processed)| {
-                        processed.peaks =  Some(waveform_to_events(&processed.waveform, &processing.algorithm).iter().map(|(time, pos)|{
-                            let pos = if processing.convert_to_kev {
-                                convert_to_kev(pos, *ch_id, &processing.algorithm)
-                            } else {
-                                *pos
-                            };
-                            [*time as f64 / 8.0, pos as f64]
-                        }).collect::<Vec<_>>());
-                    })
-                });
+
+            let waveforms = waveforms.lock().clone().unwrap();
+            let mut new_indexes = vec![];
+
+            for (time, channels) in waveforms {
+                'frameloop: for (ch_id, waveform) in channels {
+                    let events = waveform_to_events(&waveform,  ch_id as u8, &processing.algorithm, None);
+                    for (_, amp) in events {
+                        let amp = if processing.convert_to_kev {
+                            convert_to_kev(&amp, ch_id as u8, &processing.algorithm)
+                        } else {
+                            amp
+                        };
+                        if range.contains(&amp) {
+                            new_indexes.push(time);
+                            break 'frameloop;
+                        }
+                    }
+                }
             }
 
-            if let Some(events) = events.lock().as_ref() {
-                *indexes.lock() = Some(events.iter().enumerate().filter_map(|(idx, frame)| {
-                    let ProcessedDeviceFrame { channels, .. } = frame;
-                    if channels.iter().any(|(_ , event)| {
-                        if let Some(peaks) = event.peaks.as_ref() {
-                            peaks.iter().any(|[_, amp]| {
-                                range.contains(&(*amp as f32))
-                            })
-                        } else {
-                            false
-                        }
-                    }) {
-                        Some(idx)
-                    } else {
-                        None
-                    }
-                }).collect::<Vec<_>>());
-            }
+            *indexes.lock() = Some(new_indexes);
         });
     }
 
-    fn plot_processed_frame(plot_ui: &mut PlotUi, event: BTreeMap<u8, ProcessedChannel>, secondary: bool, offset: i64) {
-        for (ch_id, processed) in event {
-            let ProcessedChannel { waveform, peaks } = processed;
+    fn plot_processed_frame(
+        current: usize,
+        processing: &ProcessParams,
+        plot_ui: &mut PlotUi,
+        indexes: &[u64],
+        waveforms: &BTreeMap<u64, BTreeMap<usize, ProcessedWaveform>>) {
 
-            waveform.draw_egui(
+        let frame = {
+            let current_time = indexes[current];
+            waveforms.get(&current_time).unwrap().clone()
+        };
+
+        for (ch_id, waveform) in frame {
+            waveform.clone().draw_egui(
                 plot_ui, 
                 Some(&format!("ch# {}", ch_id + 1)), 
-                Some(color_for_index(ch_id as usize)), 
-                Some(if secondary {1.0} else {3.0}), 
-                Some(offset)
+                Some(color_for_index(ch_id)), 
+                Some(1.0), 
+                Some(0)
             );
         
-            if !secondary {
-                if let Some(peaks) = peaks {
-                    plot_ui.points(Points::new(
-                        peaks
-                        ).shape(MarkerShape::Diamond)
-                        .filled(false)
-                        .radius(10.0)
-                        .color(color_for_index(ch_id as usize))
-                    )
-                }
+            let mut events = waveform_to_events(&waveform, ch_id as u8, &processing.algorithm, Some(plot_ui));
+            if processing.convert_to_kev {
+                events.iter_mut().for_each(|(_, amp)| *amp = convert_to_kev(amp, ch_id as u8, &processing.algorithm));
+            }
+
+            if !events.is_empty() {
+                plot_ui.points(Points::new(
+                        events.into_iter().map(|(pos, amp)| [(pos / 8) as f64, amp as f64]).collect::<Vec<_>>()
+                    ).shape(MarkerShape::Diamond)
+                    .filled(false)
+                    .radius(10.0)
+                    .color(color_for_index(ch_id))
+                )
             }
         }
     }
@@ -218,31 +158,28 @@ impl FilteredViewer {
         }
     }
 
-    fn find_neighbors(position: usize, neighborhood: usize, events: &[ProcessedDeviceFrame]) -> Vec<ProcessedDeviceFrame> {
-
-        let time = events[position].time;
-
-        let mut neighbors = vec![];
-        {
-            if position != 0 {
-                let mut left_position = position - 1;
-                while left_position != 0 && time.abs_diff(events[left_position].time) < neighborhood as u64  {
-                    neighbors.push(events[left_position].clone());
-                    left_position -= 1;
-                }
-            }
-        }
-
-        {
-            let mut right_position = position + 1;
-            while right_position < events.len() && time.abs_diff(events[right_position].time) < neighborhood as u64 {
-                neighbors.push(events[right_position].clone());
-                right_position += 1;
-            }
-        }
-
-        neighbors
-    }
+    // TODO: fix this
+    // fn find_neighbors(self, position: usize, neighborhood: usize, events: &[NumassFrame]) -> Vec<NumassFrame> {
+    //     let time = events[position].time;
+    //     let mut neighbors = vec![];
+    //     {
+    //         if position != 0 {
+    //             let mut left_position = position - 1;
+    //             while left_position != 0 && time.abs_diff(events[left_position].time) < neighborhood as u64  {
+    //                 neighbors.push(events[left_position].clone());
+    //                 left_position -= 1;
+    //             }
+    //         }
+    //     }
+    //     {
+    //         let mut right_position = position + 1;
+    //         while right_position < events.len() && time.abs_diff(events[right_position].time) < neighborhood as u64 {
+    //             neighbors.push(events[right_position].clone());
+    //             right_position += 1;
+    //         }
+    //     }
+    //     neighbors
+    // }
 }
 
 impl eframe::App for FilteredViewer {
@@ -285,7 +222,7 @@ impl eframe::App for FilteredViewer {
             ui.label("neighborhood");
             ui.add(egui::Slider::new(&mut self.neighborhood, 0..=10000).text("ns"));
 
-            ui.checkbox(&mut self.merge, "merge waveforms");
+            // ui.checkbox(&mut self.merge, "merge waveforms");
 
             if ui.button("apply").clicked() {
                 self.update_indexes();
@@ -322,56 +259,18 @@ impl eframe::App for FilteredViewer {
                     }
                 }
 
-                if let Some(events) = self.events.lock().as_ref() {
-                    
-                    ui.label(format!("{:.3} ms", events[self.current].time as f64 / 1e6));
-
-                    if ui.button("save").clicked() {
-
-                        let trigger_event = events[self.current].clone();
-                        let neighbors = FilteredViewer::find_neighbors(
-                            self.current, self.neighborhood, events);
-
-                        let output = json!({
-                            "filepath": self.filepath.clone(),
-                            "processing": self.processing,
-                            "range": self.range,
-                            "neighborhood": self.neighborhood,
-                            "trigger_event": trigger_event,
-                            "neighbors": neighbors,
-                        });
-
-                        let filename = self.filepath.clone().file_name().unwrap().to_str().unwrap().to_owned();
-                        let time = trigger_event.time;
-
-                        spawn(async move {
-
-                            let filepath = format!("filtered-{filename}-{time}.json");
-    
-                            #[cfg(not(target_arch = "wasm32"))] {
-                                if let Some(save_folder) = rfd::FileDialog::new().set_directory(home_dir().unwrap()).pick_folder() {
-                                    tokio::fs::write(
-                                        save_folder.join(filepath), 
-                                        serde_json::to_string_pretty(&output).unwrap()).await.unwrap()
-                                }       
-                            }
-                            #[cfg(target_arch = "wasm32")] {
-                                download(filepath.as_str(), &serde_json::to_string_pretty(&output).unwrap());
-                            }
-                        });
+                if let Some(waveforms) = self.waveforms.lock().as_ref() {
+                    if let Some(indexes) = self.indexes.lock().as_ref() {
+                        ui.label(format!("{:.3} ms", indexes[self.current] as f64 / 1e6));    
                     }
-
-                }   
+                }
             })
         });
 
         eframe::egui::CentralPanel::default().show(ctx, |ui| {
 
-            let indexes = self.indexes.lock().clone();
-            let events = self.events.lock(); 
-
-            if let Some(indexes) = indexes.as_ref() {
-                if let Some(events) = events.as_ref() {
+            if let Some(indexes) = self.indexes.lock().as_ref() {
+                if let Some(waveforms) = self.waveforms.lock().as_ref() {
                     eframe::egui::plot::Plot::new("waveforms")
                     .legend(eframe::egui::plot::Legend {
                         text_style: eframe::egui::TextStyle::Body,
@@ -387,16 +286,12 @@ impl eframe::App for FilteredViewer {
 
                         let position = indexes[self.current];
 
-                        let ProcessedDeviceFrame { time, channels } = if self.merge {
-                            events[position].merge()
-                        } else { events[position].to_owned() };
-
-                        FilteredViewer::plot_processed_frame(plot_ui, channels, false, 0);
-
-                        for ProcessedDeviceFrame { time: time_2, channels } in FilteredViewer::find_neighbors(position, self.neighborhood, events) {
-                            let offset = (time_2 as i64 - time as i64) / 8;
-                            FilteredViewer::plot_processed_frame(plot_ui, channels, true, offset);
-                        }
+                        FilteredViewer::plot_processed_frame(
+                            self.current,
+                            &self.processing,
+                            plot_ui,
+                            indexes,
+                            waveforms);
                     });
 
                 } else {

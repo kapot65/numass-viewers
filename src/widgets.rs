@@ -18,70 +18,75 @@ pub fn histogram_params_editor(ui: &mut Ui, histogram: &HistogramParams) -> Hist
 
 pub fn post_process_editor(ui: &mut Ui, ctx: &egui::Context, params: &PostProcessParams) -> PostProcessParams {
 
-    ui.label("Postprocessing params");
-
     let mut use_dead_time = params.use_dead_time;
     let mut effective_dead_time = params.effective_dead_time;
-
-    ui.checkbox(&mut use_dead_time, "use dead time");
-    ui.add_enabled(
-        use_dead_time,
-        egui::Slider::new(&mut effective_dead_time, 0..=30000).text("ns"),
-    );
-
     let mut merge_close_events = params.merge_close_events;
-    ui.checkbox(&mut merge_close_events, "merge close events");
-
     let mut merge_map = params.merge_map;
-    ui.collapsing("merge mapping", |ui| {
-        egui_extras::TableBuilder::new(ui)
-            // .auto_shrink([false, false])
-            .columns(egui_extras::Column::initial(15.0), 8)
-            .header(20.0, |mut header| {
-                header.col(|_| {});
-                for idx in 0..7 {
-                    header.col(|ui| {
-                        ui.label((idx + 1).to_string());
-                    });
-                }
-            })
-            .body(|mut body| {
-                for ch_1 in 0usize..7 {
-                    body.row(20.0, |mut row| {
-                        row.col(|ui| {
-                            ui.label(format!("{}<", ch_1 + 1));
+
+    ui.add_enabled_ui(false, |ui| { // TODO: fix this
+        ui.label("Postprocessing params");
+
+        ui.checkbox(&mut use_dead_time, "use dead time");
+        ui.add_enabled(
+            use_dead_time,
+            egui::Slider::new(&mut effective_dead_time, 0..=30000).text("ns"),
+        );
+        
+        ui.checkbox(&mut merge_close_events, "merge close events");
+        
+        ui.collapsing("merge mapping", |ui| {
+            egui_extras::TableBuilder::new(ui)
+                // .auto_shrink([false, false])
+                .columns(egui_extras::Column::initial(15.0), 8)
+                .header(20.0, |mut header| {
+                    header.col(|_| {});
+                    for idx in 0..7 {
+                        header.col(|ui| {
+                            ui.label((idx + 1).to_string());
                         });
-                        for ch_2 in 0usize..7 {
+                    }
+                })
+                .body(|mut body| {
+                    for ch_1 in 0usize..7 {
+                        body.row(20.0, |mut row| {
                             row.col(|ui| {
-                                if ch_1 == ch_2 {
-                                    let checkbox =
-                                        egui::Checkbox::new(&mut merge_map[ch_1][ch_2], "");
-                                    ui.add_enabled(false, checkbox);
-                                } else if ui.checkbox(&mut merge_map[ch_1][ch_2], "").changed()
-                                    && merge_map[ch_1][ch_2]
-                                {
-                                    merge_map[ch_2][ch_1] = false;
-                                }
+                                ui.label(format!("{}<", ch_1 + 1));
                             });
-                        }
-                    });
-                }
-            });
+                            for ch_2 in 0usize..7 {
+                                row.col(|ui| {
+                                    if ch_1 == ch_2 {
+                                        let checkbox =
+                                            egui::Checkbox::new(&mut merge_map[ch_1][ch_2], "");
+                                        ui.add_enabled(false, checkbox);
+                                    } else if ui.checkbox(&mut merge_map[ch_1][ch_2], "").changed()
+                                        && merge_map[ch_1][ch_2]
+                                    {
+                                        merge_map[ch_2][ch_1] = false;
+                                    }
+                                });
+                            }
+                        });
+                    }
+                });
 
-        let image = if ctx.style().visuals.dark_mode {
-            egui_extras::image::RetainedImage::from_svg_bytes(
-                "Detector.drawio.png",
-                include_bytes!("../resources/detector_dark.svg"),
-            ).unwrap()
-        } else {
-            egui_extras::image::RetainedImage::from_svg_bytes(
-                "Detector.drawio.png",
-                include_bytes!("../resources/detector_light.svg"),
-            ).unwrap()
-        };
+            let image = if ctx.style().visuals.dark_mode {
+                egui_extras::image::RetainedImage::from_svg_bytes(
+                    "Detector.drawio.png",
+                    include_bytes!("../resources/detector_dark.svg"),
+                ).unwrap()
+            } else {
+                egui_extras::image::RetainedImage::from_svg_bytes(
+                    "Detector.drawio.png",
+                    include_bytes!("../resources/detector_light.svg"),
+                ).unwrap()
+            };
 
-        image.show(ui);
+            image.show(ui);
+        });
     });
+    
+
+    ui.set_enabled(true);
 
     PostProcessParams { 
         use_dead_time,
