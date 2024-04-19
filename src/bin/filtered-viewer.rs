@@ -20,9 +20,6 @@ async fn main() {
         /// maximal amplitude in range
         #[clap(long, default_value_t = 27.0)]
         max: f32,
-        /// size of neighboor events will be shown (in nanoseconds)
-        #[clap(long, default_value_t = 5000)]
-        neighborhood: usize,
         /// processing params serialized to json
         #[clap(long)]
         processing: Option<String>
@@ -30,7 +27,6 @@ async fn main() {
 
     let args = Opt::parse();
     let filepath = args.filepath;
-    let neighborhood = args.neighborhood;
     let range = args.min..args.max;
 
     let processing = if let Some(processing) = args.processing {
@@ -44,7 +40,7 @@ async fn main() {
         format!("filtered {filepath:?}").as_str(),
         native_options,
         Box::new(move |_| {
-            Box::new(FilteredViewer::init_with_point(filepath, processing, range, neighborhood))
+            Box::new(FilteredViewer::init_with_point(filepath, processing, range))
         }),
     )
     .unwrap();

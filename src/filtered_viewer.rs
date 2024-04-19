@@ -5,7 +5,8 @@ use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
 use processing::{
     process::{convert_to_kev, extract_waveforms, waveform_to_events, ProcessParams}, storage::load_point, types::{NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
 };
-use crate::widgets::process_editor;
+
+use processing::widgets::UserInput;
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
@@ -31,7 +32,6 @@ enum AppState {
 pub struct FilteredViewer {
     processing: ProcessParams,
     range: Range<f32>,
-    neighborhood: usize,
     waveforms: Arc<Mutex<Option<NumassWaveforms>>>,
     indexes: Arc<Mutex<Option<Vec<u64>>>>,
     state: Arc<Mutex<AppState>>,
@@ -43,13 +43,11 @@ impl FilteredViewer {
         filepath: PathBuf,
         processing: ProcessParams,
         range: Range<f32>,
-        neighborhood: usize
     ) -> Self {
 
         let viewer = Self {
             processing,
             range,
-            neighborhood,
             waveforms: Arc::new(Mutex::new(None)),
             indexes: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(AppState::Initializing)),
@@ -158,28 +156,6 @@ impl FilteredViewer {
         }
     }
 
-    // TODO: fix this
-    // fn find_neighbors(self, position: usize, neighborhood: usize, events: &[NumassFrame]) -> Vec<NumassFrame> {
-    //     let time = events[position].time;
-    //     let mut neighbors = vec![];
-    //     {
-    //         if position != 0 {
-    //             let mut left_position = position - 1;
-    //             while left_position != 0 && time.abs_diff(events[left_position].time) < neighborhood as u64  {
-    //                 neighbors.push(events[left_position].clone());
-    //                 left_position -= 1;
-    //             }
-    //         }
-    //     }
-    //     {
-    //         let mut right_position = position + 1;
-    //         while right_position < events.len() && time.abs_diff(events[right_position].time) < neighborhood as u64 {
-    //             neighbors.push(events[right_position].clone());
-    //             right_position += 1;
-    //         }
-    //     }
-    //     neighbors
-    // }
 }
 
 impl eframe::App for FilteredViewer {
@@ -210,7 +186,7 @@ impl eframe::App for FilteredViewer {
 
         eframe::egui::SidePanel::left("parameters").show(ctx, |ui| {
 
-            let processing = process_editor(ui, &self.processing);
+            self.processing =  self.processing.input(ui, ctx);
 
             ui.separator();
             let mut min = self.range.start;
@@ -218,11 +194,6 @@ impl eframe::App for FilteredViewer {
             let mut max = self.range.end;
             ui.add(egui::Slider::new(&mut max, -10.0..=400.0).text("right"));
             self.range = min..max;
-
-            ui.label("neighborhood");
-            ui.add(egui::Slider::new(&mut self.neighborhood, 0..=10000).text("ns"));
-
-            // ui.checkbox(&mut self.merge, "merge waveforms");
 
             if ui.button("apply").clicked() {
                 self.update_indexes();

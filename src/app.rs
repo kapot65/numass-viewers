@@ -5,9 +5,8 @@ use std::sync::Arc;
 use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot, Points}}};
 
 use globset::GlobMatcher;
-use processing::viewer::ViewerState;
+use processing::{viewer::ViewerState, widgets::UserInput};
 
-use crate::widgets::{process_editor, post_process_editor, histogram_params_editor};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -506,15 +505,15 @@ fn file_tree_entry(
 
 fn params_editor(ui: &mut Ui, ctx: &egui::Context, state: ViewerState) -> ViewerState {
 
-    let process = process_editor(ui, &state.process);
+    let process = state.process.input(ui, ctx);
 
     ui.separator();
 
-    let post_process = post_process_editor(ui, ctx, &state.post_process);
+    let post_process = state.post_process.input(ui, ctx);
 
     ui.separator();
 
-    let histogram = histogram_params_editor(ui, &state.histogram);
+    let histogram = state.histogram.input(ui, ctx);
     
     let changed = state.changed || (
         process != state.process || 

@@ -17,7 +17,6 @@ pub mod hyperlink;
 pub mod filtered_viewer;
 pub mod point_viewer;
 pub mod bundle_viewer;
-pub mod widgets;
 
 /// Increment processed files counter and reset it if it is finished.
 pub fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
