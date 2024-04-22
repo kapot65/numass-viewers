@@ -1,7 +1,7 @@
 use std::{sync::Arc, path::PathBuf};
 
 use egui::mutex::Mutex;
-use egui_plot::Legend;
+use egui_plot::{GridMark, Legend};
 use processing::{
     utils::{color_for_index, EguiLine}, 
     types::ProcessedWaveform, 
@@ -141,8 +141,7 @@ impl eframe::App for PointViewer {
                         });
             
                         egui_plot::Plot::new("waveforms").legend(Legend::default())
-                            // TODO: fix
-                            // .x_axis_formatter(|value, _| format!("{value:.3} μs"))
+                            .x_axis_formatter(|GridMark { value, ..}, _, _| format!("{value:.3} μs"))
                             .show(ui, |plot_ui| {
 
                                 for (ch_num, offset, waveform) in chunks[self.current_chunk].clone() {

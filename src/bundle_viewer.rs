@@ -144,8 +144,7 @@ impl eframe::App for BundleViewer {
                         });
 
                         egui_plot::Plot::new("waveforms").legend(Legend::default())
-                            // TODO: fix 
-                            // .x_axis_formatter(|value, _| format!("{:.3} ms", value))
+                            .x_axis_formatter(|mark, _, _| format!("{:.3} ms", mark.value))
                             .show(ui, |plot_ui| {
 
                                 let mut channel_points = BTreeMap::new();

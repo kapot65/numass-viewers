@@ -248,8 +248,7 @@ impl eframe::App for FilteredViewer {
             if let Some(indexes) = self.indexes.lock().as_ref() {
                 if let Some(waveforms) = self.waveforms.lock().as_ref() {
                     egui_plot::Plot::new("waveforms").legend(Legend::default())
-                    // TODO: fix
-                    // .x_axis_formatter(|value, _| format!("{:.3} μs", (value * 8.0) / 1000.0))
+                    .x_axis_formatter(|mark, _, _| format!("{:.3} μs", (mark.value * 8.0) / 1000.0))
                     .show(ui, |plot_ui| {
 
                         if indexes.is_empty() {

@@ -591,8 +591,7 @@ impl eframe::App for DataViewerApp {
                 }
                 PlotMode::PPT => {
                     let plot = Plot::new("Point/Time").legend(Legend::default())
-                    // TODO: fix
-                    // .x_axis_formatter(|value, _| chrono::NaiveDateTime::from_timestamp_millis(value as i64).unwrap().to_string())
+                    .x_axis_formatter(|mark, _, _| chrono::NaiveDateTime::from_timestamp_millis(mark.value as i64).unwrap().to_string())
                     .height(height - 35.0);
 
                     plot.show(ui, |plot_ui| {
