@@ -6,6 +6,7 @@ use viewers::app;
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() -> eframe::Result<()> {
+    use egui_extras::install_image_loaders;
     use processing::storage::FSRepr;
     use {clap::Parser, std::path::PathBuf};
 
@@ -34,7 +35,8 @@ async fn main() -> eframe::Result<()> {
     eframe::run_native(
         "data-viewer",
         native_options,
-        Box::new(|_| {
+        Box::new(|ctx| {
+            install_image_loaders(&ctx.egui_ctx);
             let app = app::DataViewerApp::new();
             if let Some(directory) = opt.directory {
                 *app.root.lock() = FSRepr::expand_dir(directory)
@@ -78,7 +80,6 @@ fn main() {
     if let Some(ViewerMode::FilteredEvents {
         filepath,
         range,
-        neighborhood,
         processing
     }) = request
     {
@@ -87,12 +88,12 @@ fn main() {
             web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(move |_| {
+                Box::new(move |ctx| {
+                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                     let app = filtered_viewer::FilteredViewer::init_with_point(
                         filepath, 
                         processing, 
-                        range,
-                        neighborhood);
+                        range);
                     Box::new(app)
                 }),
             )
@@ -107,7 +108,8 @@ fn main() {
             web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|_| {
+                Box::new(|ctx| {
+                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                     Box::new(point_viewer::PointViewer::init_with_point(filepath))
                 }),
             )
@@ -122,7 +124,8 @@ fn main() {
             web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|_| {
+                Box::new(|ctx| {
+                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                     Box::new(bundle_viewer::BundleViewer::init_with_point(filepath))
                 }),
             )
@@ -134,7 +137,9 @@ fn main() {
             web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
-                Box::new(|_| {
+                Box::new(|ctx| {
+                    install_image_loaders(&ctx.egui_ctx);
+                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                     let app = app::DataViewerApp::new();
                     Box::new(app)
                 }),

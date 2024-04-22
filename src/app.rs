@@ -2,7 +2,8 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui, plot::{Legend, Plot, Points}}};
+use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui }};
+use egui_plot::{Legend, Plot, Points};
 
 use globset::GlobMatcher;
 use processing::{viewer::ViewerState, widgets::UserInput};
@@ -556,16 +557,17 @@ impl eframe::App for DataViewerApp {
             }).collect::<Vec<_>>();
 
             #[cfg(not(target_arch = "wasm32"))]
-            let height = _frame.info().window_info.size.y;
+            let height = {
+                let mut y = 0.0;
+                ctx.input(|i| {y = i.viewport().inner_rect.unwrap().size().y});
+                y
+            };
             #[cfg(target_arch = "wasm32")]
             let height = window().unwrap().inner_height().unwrap().as_f64().unwrap() as f32;
 
             match self.plot_mode {
                 PlotMode::Histogram => {
-                    let plot = Plot::new("Histogram Plot").legend(Legend { 
-                        text_style: egui::TextStyle::Body,
-                        background_alpha: 1.0, position: egui::plot::Corner::RightTop
-                    })
+                    let plot = Plot::new("Histogram Plot").legend(Legend::default())
                     .height(height - 35.0);
 
                     plot.show(ui, |plot_ui| {
@@ -588,11 +590,9 @@ impl eframe::App for DataViewerApp {
                     });
                 }
                 PlotMode::PPT => {
-                    let plot = Plot::new("Point/Time").legend(Legend {
-                        text_style: egui::TextStyle::Body,
-                        background_alpha: 1.0, position: egui::plot::Corner::RightTop
-                    })
-                    .x_axis_formatter(|value, _| chrono::NaiveDateTime::from_timestamp_millis(value as i64).unwrap().to_string())
+                    let plot = Plot::new("Point/Time").legend(Legend::default())
+                    // TODO: fix
+                    // .x_axis_formatter(|value, _| chrono::NaiveDateTime::from_timestamp_millis(value as i64).unwrap().to_string())
                     .height(height - 35.0);
 
                     plot.show(ui, |plot_ui| {
@@ -608,10 +608,7 @@ impl eframe::App for DataViewerApp {
                     });
                 }
                 PlotMode::PPV => {
-                    let plot = Plot::new("Point/Voltage").legend(Legend {
-                        text_style: egui::TextStyle::Body,
-                        background_alpha: 1.0, position: egui::plot::Corner::RightTop
-                    })
+                    let plot = Plot::new("Point/Voltage").legend(Legend::default())
                     .height(height - 35.0);
 
                     plot.show(ui, |plot_ui| {
@@ -664,8 +661,7 @@ impl eframe::App for DataViewerApp {
                         let search = serde_qs::to_string(&ViewerMode::FilteredEvents {
                             filepath: PathBuf::from(filepath),
                             processing: process,
-                            range: left_border.max(0.0)..right_border.max(0.0),
-                            neighborhood: 5000 }).unwrap();
+                            range: left_border.max(0.0)..right_border.max(0.0)}).unwrap();
                         window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
                     }
                 }

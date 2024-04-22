@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc, vec};
 
-use egui::{mutex::Mutex, plot::{PlotUi, Points, MarkerShape}};
+use egui_plot::{Legend, MarkerShape, PlotUi, Points};
+use egui::mutex::Mutex;
 
 use processing::{
     process::{convert_to_kev, extract_waveforms, waveform_to_events, ProcessParams}, storage::load_point, types::{NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
@@ -204,7 +205,11 @@ impl eframe::App for FilteredViewer {
             ui.horizontal(|ui| {
 
                 #[cfg(not(target_arch = "wasm32"))]
-                let width = frame.info().window_info.size.x;
+                let width = {
+                    let mut x = 0.0;
+                    ctx.input(|i| {x = i.viewport().inner_rect.unwrap().size().x});
+                    x
+                };
                 #[cfg(target_arch = "wasm32")]
                 let width = eframe::web_sys::window()
                     .unwrap()
@@ -242,13 +247,9 @@ impl eframe::App for FilteredViewer {
 
             if let Some(indexes) = self.indexes.lock().as_ref() {
                 if let Some(waveforms) = self.waveforms.lock().as_ref() {
-                    eframe::egui::plot::Plot::new("waveforms")
-                    .legend(eframe::egui::plot::Legend {
-                        text_style: eframe::egui::TextStyle::Body,
-                        background_alpha: 1.0,
-                        position: eframe::egui::plot::Corner::RightTop,
-                    })
-                    .x_axis_formatter(|value, _| format!("{:.3} μs", (value * 8.0) / 1000.0))
+                    egui_plot::Plot::new("waveforms").legend(Legend::default())
+                    // TODO: fix
+                    // .x_axis_formatter(|value, _| format!("{:.3} μs", (value * 8.0) / 1000.0))
                     .show(ui, |plot_ui| {
 
                         if indexes.is_empty() {

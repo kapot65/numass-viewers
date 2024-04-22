@@ -1,6 +1,7 @@
 use std::{sync::Arc, path::PathBuf};
 
 use egui::mutex::Mutex;
+use egui_plot::Legend;
 use processing::{
     utils::{color_for_index, EguiLine}, 
     types::ProcessedWaveform, 
@@ -110,7 +111,11 @@ impl eframe::App for PointViewer {
 
                     egui::CentralPanel::default().show(ctx, |ui| {
                         #[cfg(not(target_arch = "wasm32"))]
-                        let width = frame.info().window_info.size.x;
+                        let width = {
+                            let mut x = 0.0;
+                            ctx.input(|i| {x = i.viewport().inner_rect.unwrap().size().x});
+                            x
+                        };
                         #[cfg(target_arch = "wasm32")]
                         let width = eframe::web_sys::window()
                             .unwrap()
@@ -135,13 +140,9 @@ impl eframe::App for PointViewer {
                             }
                         });
             
-                        egui::plot::Plot::new("waveforms")
-                            .legend(egui::plot::Legend {
-                                text_style: egui::TextStyle::Body,
-                                background_alpha: 1.0,
-                                position: egui::plot::Corner::RightTop,
-                            })
-                            .x_axis_formatter(|value, _| format!("{value:.3} μs"))
+                        egui_plot::Plot::new("waveforms").legend(Legend::default())
+                            // TODO: fix
+                            // .x_axis_formatter(|value, _| format!("{value:.3} μs"))
                             .show(ui, |plot_ui| {
 
                                 for (ch_num, offset, waveform) in chunks[self.current_chunk].clone() {

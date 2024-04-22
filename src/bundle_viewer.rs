@@ -1,6 +1,7 @@
 use std::{sync::Arc, path::PathBuf, collections::BTreeMap};
 
-use egui::{mutex::Mutex, plot::Points};
+use egui_plot::{Legend, Points};
+use egui::mutex::Mutex;
 use processing::{
     utils::color_for_index, 
     numass::protos::rsb_event, process::{ProcessParams, extract_events}, 
@@ -113,7 +114,11 @@ impl eframe::App for BundleViewer {
 
                     egui::CentralPanel::default().show(ctx, |ui| {
                         #[cfg(not(target_arch = "wasm32"))]
-                        let width = frame.info().window_info.size.x;
+                        let width = {
+                            let mut x = 0.0;
+                            ctx.input(|i| {x = i.viewport().inner_rect.unwrap().size().x});
+                            x
+                        };
                         #[cfg(target_arch = "wasm32")]
                         let width = eframe::web_sys::window()
                             .unwrap()
@@ -138,13 +143,9 @@ impl eframe::App for BundleViewer {
                             }
                         });
 
-                        egui::plot::Plot::new("waveforms")
-                            .legend(egui::plot::Legend {
-                                text_style: egui::TextStyle::Body,
-                                background_alpha: 1.0,
-                                position: egui::plot::Corner::RightTop,
-                            })
-                            .x_axis_formatter(|value, _| format!("{:.3} ms", value))
+                        egui_plot::Plot::new("waveforms").legend(Legend::default())
+                            // TODO: fix 
+                            // .x_axis_formatter(|value, _| format!("{:.3} ms", value))
                             .show(ui, |plot_ui| {
 
                                 let mut channel_points = BTreeMap::new();
