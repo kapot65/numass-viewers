@@ -1,10 +1,10 @@
 use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc, vec};
 
-use egui_plot::{Legend, MarkerShape, PlotUi, Points};
+use egui_plot::{Legend, PlotUi};
 use egui::mutex::Mutex;
 
 use processing::{
-    process::{convert_to_kev, extract_waveforms, waveform_to_events, ProcessParams, StaticProcessParams}, storage::load_point, types::{NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
+    process::{convert_to_kev, extract_waveforms, frame_to_events, ProcessParams, StaticProcessParams}, storage::load_point, types::{FrameEvent, NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
 };
 
 use processing::widgets::UserInput;
@@ -90,23 +90,25 @@ impl FilteredViewer {
             let static_params = static_params.lock().clone();
             let mut new_indexes = vec![];
 
-            for (time, channels) in waveforms {
-                'frameloop: for (ch_id, waveform) in channels {
-                    let events = waveform_to_events(
-                        &waveform,  ch_id, 
-                        &processing.algorithm, 
-                        &static_params,
-                        None
-                    );
-                    for (_, amp) in events {
-                        let amp = if processing.convert_to_kev {
-                            convert_to_kev(&amp, ch_id, &processing.algorithm)
+            for (time, frame) in waveforms {
+
+                let events = frame_to_events(
+                    &frame,
+                    &processing.algorithm, 
+                    &static_params,
+                    None
+                );
+
+                for (_, event) in events {
+                    if let FrameEvent::Event {channel, amplitude, .. } = event {
+                        let amplitude = if processing.convert_to_kev {
+                            convert_to_kev(&amplitude, channel, &processing.algorithm)
                         } else {
-                            amp
+                            amplitude
                         };
-                        if range.contains(&amp) {
+                        if range.contains(&amplitude) {
                             new_indexes.push(time);
-                            break 'frameloop;
+                            break;
                         }
                     }
                 }
@@ -129,6 +131,21 @@ impl FilteredViewer {
             waveforms.get(&current_time).unwrap().clone()
         };
 
+        let mut events = frame_to_events(
+            &frame, 
+            &processing.algorithm,
+            static_params,
+            Some(plot_ui)
+        );
+
+        if processing.convert_to_kev {
+            events.iter_mut().for_each(|(_, event)| {
+                if let FrameEvent::Event { channel: ch_id, amplitude , ..} = event {
+                    *amplitude = convert_to_kev(amplitude, *ch_id, &processing.algorithm)
+                }
+            });
+        }
+
         for (ch_id, waveform) in frame {
             waveform.clone().draw_egui(
                 plot_ui, 
@@ -137,26 +154,6 @@ impl FilteredViewer {
                 Some(1.0), 
                 Some(0)
             );
-        
-            let mut events = waveform_to_events(
-                &waveform, ch_id, 
-                &processing.algorithm,
-                static_params,
-                Some(plot_ui)
-            );
-            if processing.convert_to_kev {
-                events.iter_mut().for_each(|(_, amp)| *amp = convert_to_kev(amp, ch_id, &processing.algorithm));
-            }
-
-            if !events.is_empty() {
-                plot_ui.points(Points::new(
-                        events.into_iter().map(|(pos, amp)| [(pos / 8) as f64, amp as f64]).collect::<Vec<_>>()
-                    ).shape(MarkerShape::Diamond)
-                    .filled(false)
-                    .radius(10.0)
-                    .color(color_for_index(ch_id as usize))
-                )
-            }
         }
     }
 

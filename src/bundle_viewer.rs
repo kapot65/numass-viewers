@@ -3,10 +3,7 @@ use std::{sync::Arc, path::PathBuf, collections::BTreeMap};
 use egui_plot::{Legend, Points};
 use egui::mutex::Mutex;
 use processing::{
-    utils::color_for_index, 
-    numass::protos::rsb_event, process::{ProcessParams, extract_events}, 
-    postprocess::{PostProcessParams, post_process},
-    storage::load_point
+    numass::protos::rsb_event, postprocess::{post_process, PostProcessParams}, process::{extract_events, ProcessParams}, storage::load_point, types::FrameEvent, utils::color_for_index
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -33,7 +30,7 @@ pub struct BundleViewer {
 fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
 
     let frames = post_process(
-        extract_events(&point, &ProcessParams::default()), 
+        extract_events(point, &ProcessParams::default()), 
         &PostProcessParams::default()
     );
 
@@ -41,8 +38,9 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
     chunks.push(vec![]);
 
     for (time, frame) in frames {
-        for (ch_num, events) in frame {
-            for (offset, amp) in events {
+        for (offset, event) in frame {
+
+            if let FrameEvent::Event { channel, amplitude, .. } = event {
                 let time = time + offset as u64;
                 let chunk_num = (time / limit_ns) as usize;
                     
@@ -51,9 +49,9 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
                 }
 
                 chunks[chunk_num].push((
-                    ch_num as u8,
+                    channel,
                     (time % limit_ns) as i64,
-                    amp
+                    amplitude
                 ));
             }
         }
@@ -84,6 +82,7 @@ impl BundleViewer {
     }
 }
 
+// TODO: add visualization for resets, overflows
 impl eframe::App for BundleViewer {
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
