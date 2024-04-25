@@ -63,7 +63,7 @@ impl FilteredViewer {
 
         spawn(async move {
             let point = load_point(&filepath).await;
-            let loaded_waveforms: BTreeMap<u64, BTreeMap<usize, ProcessedWaveform>> = extract_waveforms(&point);
+            let loaded_waveforms = extract_waveforms(&point);
 
             *waveforms.lock() = Some(loaded_waveforms);
             *state.lock() = AppState::FirstLoad;
@@ -93,14 +93,14 @@ impl FilteredViewer {
             for (time, channels) in waveforms {
                 'frameloop: for (ch_id, waveform) in channels {
                     let events = waveform_to_events(
-                        &waveform,  ch_id as u8, 
+                        &waveform,  ch_id, 
                         &processing.algorithm, 
                         &static_params,
                         None
                     );
                     for (_, amp) in events {
                         let amp = if processing.convert_to_kev {
-                            convert_to_kev(&amp, ch_id as u8, &processing.algorithm)
+                            convert_to_kev(&amp, ch_id, &processing.algorithm)
                         } else {
                             amp
                         };
@@ -122,7 +122,7 @@ impl FilteredViewer {
         plot_ui: &mut PlotUi,
         indexes: &[u64],
         static_params: &StaticProcessParams,
-        waveforms: &BTreeMap<u64, BTreeMap<usize, ProcessedWaveform>>) {
+        waveforms: &BTreeMap<u64, BTreeMap<u8, ProcessedWaveform>>) {
 
         let frame = {
             let current_time = indexes[current];
@@ -133,19 +133,19 @@ impl FilteredViewer {
             waveform.clone().draw_egui(
                 plot_ui, 
                 Some(&format!("ch# {}", ch_id + 1)), 
-                Some(color_for_index(ch_id)), 
+                Some(color_for_index(ch_id as usize)), 
                 Some(1.0), 
                 Some(0)
             );
         
             let mut events = waveform_to_events(
-                &waveform, ch_id as u8, 
+                &waveform, ch_id, 
                 &processing.algorithm,
                 static_params,
                 Some(plot_ui)
             );
             if processing.convert_to_kev {
-                events.iter_mut().for_each(|(_, amp)| *amp = convert_to_kev(amp, ch_id as u8, &processing.algorithm));
+                events.iter_mut().for_each(|(_, amp)| *amp = convert_to_kev(amp, ch_id, &processing.algorithm));
             }
 
             if !events.is_empty() {
@@ -154,7 +154,7 @@ impl FilteredViewer {
                     ).shape(MarkerShape::Diamond)
                     .filled(false)
                     .radius(10.0)
-                    .color(color_for_index(ch_id))
+                    .color(color_for_index(ch_id as usize))
                 )
             }
         }
