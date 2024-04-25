@@ -4,7 +4,7 @@ use egui_plot::{Legend, MarkerShape, PlotUi, Points};
 use egui::mutex::Mutex;
 
 use processing::{
-    process::{convert_to_kev, extract_waveforms, waveform_to_events, ProcessParams}, storage::load_point, types::{NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
+    process::{convert_to_kev, extract_waveforms, waveform_to_events, ProcessParams, StaticProcessParams}, storage::load_point, types::{NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
 };
 
 use processing::widgets::UserInput;
@@ -36,6 +36,7 @@ pub struct FilteredViewer {
     waveforms: Arc<Mutex<Option<NumassWaveforms>>>,
     indexes: Arc<Mutex<Option<Vec<u64>>>>,
     state: Arc<Mutex<AppState>>,
+    static_params: Arc<Mutex<StaticProcessParams>>,
     current: usize,
 }
 
@@ -52,11 +53,13 @@ impl FilteredViewer {
             waveforms: Arc::new(Mutex::new(None)),
             indexes: Arc::new(Mutex::new(None)),
             state: Arc::new(Mutex::new(AppState::Initializing)),
+            static_params: Arc::new(Mutex::new(StaticProcessParams { baseline: None })),
             current: 0,
         };
 
         let waveforms = Arc::clone(&viewer.waveforms);
         let state = Arc::clone(&viewer.state);
+        let static_params = Arc::clone(&viewer.static_params);
 
         spawn(async move {
             let point = load_point(&filepath).await;
@@ -64,6 +67,7 @@ impl FilteredViewer {
 
             *waveforms.lock() = Some(loaded_waveforms);
             *state.lock() = AppState::FirstLoad;
+            *static_params.lock() = StaticProcessParams::from_point(&point);
         });
 
         viewer
@@ -75,6 +79,7 @@ impl FilteredViewer {
         let indexes = Arc::clone(&self.indexes);
         let waveforms = Arc::clone(&self.waveforms);
         let processing = self.processing.clone();
+        let static_params = Arc::clone(&self.static_params);
         let range = self.range.clone();
 
         self.current = 0;
@@ -82,11 +87,17 @@ impl FilteredViewer {
         spawn(async move {
 
             let waveforms = waveforms.lock().clone().unwrap();
+            let static_params = static_params.lock().clone();
             let mut new_indexes = vec![];
 
             for (time, channels) in waveforms {
                 'frameloop: for (ch_id, waveform) in channels {
-                    let events = waveform_to_events(&waveform,  ch_id as u8, &processing.algorithm, None);
+                    let events = waveform_to_events(
+                        &waveform,  ch_id as u8, 
+                        &processing.algorithm, 
+                        &static_params,
+                        None
+                    );
                     for (_, amp) in events {
                         let amp = if processing.convert_to_kev {
                             convert_to_kev(&amp, ch_id as u8, &processing.algorithm)
@@ -110,6 +121,7 @@ impl FilteredViewer {
         processing: &ProcessParams,
         plot_ui: &mut PlotUi,
         indexes: &[u64],
+        static_params: &StaticProcessParams,
         waveforms: &BTreeMap<u64, BTreeMap<usize, ProcessedWaveform>>) {
 
         let frame = {
@@ -126,7 +138,12 @@ impl FilteredViewer {
                 Some(0)
             );
         
-            let mut events = waveform_to_events(&waveform, ch_id as u8, &processing.algorithm, Some(plot_ui));
+            let mut events = waveform_to_events(
+                &waveform, ch_id as u8, 
+                &processing.algorithm,
+                static_params,
+                Some(plot_ui)
+            );
             if processing.convert_to_kev {
                 events.iter_mut().for_each(|(_, amp)| *amp = convert_to_kev(amp, ch_id as u8, &processing.algorithm));
             }
@@ -262,6 +279,7 @@ impl eframe::App for FilteredViewer {
                             &self.processing,
                             plot_ui,
                             indexes,
+                            &self.static_params.lock(),
                             waveforms);
                     });
 

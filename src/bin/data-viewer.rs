@@ -50,6 +50,7 @@ async fn main() -> eframe::Result<()> {
 #[cfg(target_arch = "wasm32")]
 fn main() {
     use eframe::web_sys::window;
+    use egui_extras::install_image_loaders;
     use processing::viewer::ViewerMode;
     use viewers::{
         filtered_viewer, point_viewer, bundle_viewer
