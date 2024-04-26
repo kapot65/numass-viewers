@@ -1,4 +1,11 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
+#[cfg(not(target_arch = "wasm32"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 #[cfg(target_arch = "wasm32")]
 fn main() {
     panic!("this binary is not meant to be run in browser")

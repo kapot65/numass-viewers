@@ -2,6 +2,13 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 use viewers::app;
 
+#[cfg(not(target_arch = "wasm32"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]

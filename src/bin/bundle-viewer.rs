@@ -5,6 +5,13 @@ fn main() {
 }
 
 #[cfg(not(target_arch = "wasm32"))]
+use tikv_jemallocator::Jemalloc;
+
+#[cfg(not(target_arch = "wasm32"))]
+#[global_allocator]
+static GLOBAL: Jemalloc = Jemalloc;
+
+#[cfg(not(target_arch = "wasm32"))]
 #[tokio::main]
 async fn main() {
     use clap::Parser;
