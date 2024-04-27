@@ -1,21 +1,16 @@
-use std::{collections::BTreeMap, ops::Range, path::PathBuf, sync::Arc, vec};
+use std::{collections::BTreeMap, ops::Range, path::PathBuf, vec};
 
 use egui_plot::{Legend, PlotUi};
-use egui::mutex::Mutex;
 
 use processing::{
-    process::{convert_to_kev, extract_waveforms, frame_to_events, ProcessParams, StaticProcessParams}, storage::load_point, types::{FrameEvent, NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
+    process::{convert_to_kev, extract_waveforms, frame_to_events, ProcessParams, StaticProcessParams}, storage::load_point, types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
 };
 
 use processing::widgets::UserInput;
 
-#[cfg(not(target_arch = "wasm32"))]
-use tokio::spawn;
 
 #[cfg(target_arch = "wasm32")]
-use {
-    wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
-};
+use wasm_bindgen::prelude::*;
 
 #[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
@@ -23,99 +18,73 @@ extern "C" {
     fn download(filename: &str, text: &str);
 }
 
-#[derive(Debug, Clone)]
-enum AppState {
-    Initializing,
-    FirstLoad,
-    Interactive
-}
-
-pub struct FilteredViewer {
+pub struct FilteredViewer<'a> {
     processing: ProcessParams,
     range: Range<f32>,
-    waveforms: Arc<Mutex<Option<NumassWaveforms>>>,
-    indexes: Arc<Mutex<Option<Vec<u64>>>>,
-    state: Arc<Mutex<AppState>>,
-    static_params: Arc<Mutex<StaticProcessParams>>,
+    waveforms: NumassWaveforms<'a>,
+    static_params: StaticProcessParams,
+    indexes: Option<Vec<u64>>,
     current: usize,
 }
 
-impl FilteredViewer {
-    pub fn init_with_point(
+impl<'a> FilteredViewer<'a>  {
+
+    pub async fn init_with_point (
         filepath: PathBuf,
         processing: ProcessParams,
         range: Range<f32>,
     ) -> Self {
+        let (waveforms, static_params) = {
+            let point = load_point(&filepath).await;
+            let point = Box::leak::<'a>(Box::new(point)); // TODO: set lifetime properly
+            let static_params = StaticProcessParams::from_point(point);
+            (extract_waveforms(point), static_params)
+        };
 
-        let viewer = Self {
+        let mut viewer = Self {
             processing,
             range,
-            waveforms: Arc::new(Mutex::new(None)),
-            indexes: Arc::new(Mutex::new(None)),
-            state: Arc::new(Mutex::new(AppState::Initializing)),
-            static_params: Arc::new(Mutex::new(StaticProcessParams { baseline: None })),
+            waveforms,
+            indexes: None,
+            static_params,
             current: 0,
         };
 
-        let waveforms = Arc::clone(&viewer.waveforms);
-        let state = Arc::clone(&viewer.state);
-        let static_params = Arc::clone(&viewer.static_params);
-
-        spawn(async move {
-            let point = load_point(&filepath).await;
-            let loaded_waveforms = extract_waveforms(&point);
-
-            *waveforms.lock() = Some(loaded_waveforms);
-            *state.lock() = AppState::FirstLoad;
-            *static_params.lock() = StaticProcessParams::from_point(&point);
-        });
-
+        viewer.update_indexes();
         viewer
     }
 
     fn update_indexes(&mut self) {
-        // TODO: avoid cloning
-
-        let indexes = Arc::clone(&self.indexes);
-        let waveforms = Arc::clone(&self.waveforms);
-        let processing = self.processing.clone();
-        let static_params = Arc::clone(&self.static_params);
-        let range = self.range.clone();
 
         self.current = 0;
 
-        spawn(async move {
+        let mut new_indexes = vec![];
 
-            let waveforms = waveforms.lock().clone().unwrap();
-            let static_params = static_params.lock().clone();
-            let mut new_indexes = vec![];
+        for (time, frame) in &self.waveforms {
 
-            for (time, frame) in waveforms {
+            let events = frame_to_events(
+                frame,
+                &self.processing.algorithm, 
+                &self.static_params,
+                None
+            );
 
-                let events = frame_to_events(
-                    &frame,
-                    &processing.algorithm, 
-                    &static_params,
-                    None
-                );
-
-                for (_, event) in events {
-                    if let FrameEvent::Event {channel, amplitude, .. } = event {
-                        let amplitude = if processing.convert_to_kev {
-                            convert_to_kev(&amplitude, channel, &processing.algorithm)
-                        } else {
-                            amplitude
-                        };
-                        if range.contains(&amplitude) {
-                            new_indexes.push(time);
-                            break;
-                        }
+            for (_, event) in events {
+                if let FrameEvent::Event {channel, amplitude, .. } = event {
+                    let amplitude = if self.processing.convert_to_kev {
+                        convert_to_kev(&amplitude, channel, &self.processing.algorithm)
+                    } else {
+                        amplitude
+                    };
+                    if self.range.contains(&amplitude) {
+                        new_indexes.push(*time);
+                        break;
                     }
                 }
             }
+        };
 
-            *indexes.lock() = Some(new_indexes);
-        });
+        self.indexes = Some(new_indexes);
     }
 
     fn plot_processed_frame(
@@ -124,7 +93,7 @@ impl FilteredViewer {
         plot_ui: &mut PlotUi,
         indexes: &[u64],
         static_params: &StaticProcessParams,
-        waveforms: &BTreeMap<u64, BTreeMap<u8, ProcessedWaveform>>) {
+        waveforms: &BTreeMap<u64, NumassFrame<'a>>) {
 
         let frame = {
             let current_time = indexes[current];
@@ -147,7 +116,7 @@ impl FilteredViewer {
         }
 
         for (ch_id, waveform) in frame {
-            waveform.clone().draw_egui(
+            ProcessedWaveform::from(waveform).draw_egui(
                 plot_ui, 
                 Some(&format!("ch# {}", ch_id + 1)), 
                 Some(color_for_index(ch_id as usize)), 
@@ -158,7 +127,7 @@ impl FilteredViewer {
     }
 
     fn inc(&mut self) {
-        if let Some(len) = self.indexes.lock().as_ref().map(|indexes| indexes.len()) {
+        if let Some(len) = self.indexes.as_mut().map(|indexes| indexes.len()) {
             if self.current < len - 1 {
                 self.current += 1
             }
@@ -166,27 +135,19 @@ impl FilteredViewer {
     }
 
     fn dec(&mut self) {
-        if self.indexes.lock().is_some() && self.current != 0 {
+        if self.indexes.is_some() && self.current != 0 {
             self.current -= 1
         }
     }
 
 }
 
-impl eframe::App for FilteredViewer {
+impl<'a> eframe::App for FilteredViewer<'a> {
 
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
-    
-        {
-            let state = self.state.lock().clone();
-            if let AppState::FirstLoad = state {
-                *self.state.lock() = AppState::Interactive;
-                self.update_indexes();
-            }
-        }
 
-        let indexes_len = self.indexes.lock().as_ref().map(|indexes| {
+        let indexes_len = self.indexes.as_ref().map(|indexes| {
             indexes.len()
         });
 
@@ -249,18 +210,14 @@ impl eframe::App for FilteredViewer {
                     }
                 }
 
-                if let Some(waveforms) = self.waveforms.lock().as_ref() {
-                    if let Some(indexes) = self.indexes.lock().as_ref() {
-                        ui.label(format!("{:.3} ms", indexes[self.current] as f64 / 1e6));    
-                    }
+                if let Some(indexes) = self.indexes.as_ref() {
+                    ui.label(format!("{:.3} ms", indexes[self.current] as f64 / 1e6));    
                 }
             })
         });
 
         eframe::egui::CentralPanel::default().show(ctx, |ui| {
-
-            if let Some(indexes) = self.indexes.lock().as_ref() {
-                if let Some(waveforms) = self.waveforms.lock().as_ref() {
+            if let Some(indexes) = self.indexes.as_ref() {
                     egui_plot::Plot::new("waveforms").legend(Legend::default())
                     .x_axis_formatter(|mark, _, _| format!("{:.3} μs", (mark.value * 8.0) / 1000.0))
                     .show(ui, |plot_ui| {
@@ -276,13 +233,9 @@ impl eframe::App for FilteredViewer {
                             &self.processing,
                             plot_ui,
                             indexes,
-                            &self.static_params.lock(),
-                            waveforms);
+                            &self.static_params,
+                            &self.waveforms);
                     });
-
-                } else {
-                    ui.spinner();
-                }
             } else {
                 ui.spinner();
             }

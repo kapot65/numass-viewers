@@ -93,15 +93,17 @@ fn main() {
     {
         set_title(format!("filtered {filepath:?}").as_str());
         spawn_local(async move {
+            let app = filtered_viewer::FilteredViewer::init_with_point(
+                filepath, 
+                processing, 
+                range
+            ).await;
+
             web_runner.start(
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(move |ctx| {
                     ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                    let app = filtered_viewer::FilteredViewer::init_with_point(
-                        filepath, 
-                        processing, 
-                        range);
                     Box::new(app)
                 }),
             )

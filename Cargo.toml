@@ -25,7 +25,6 @@ protobuf = "3.2.0"
 chrono = "0.4.23"
 natord = "1.0.9"
 globset = "0.4.11"
-tikv-jemallocator = "0.5.4"
 
 
 # native:
@@ -40,6 +39,8 @@ home = "0.5.4"
 which = "6.0.1"
 
 clap = { version = "4.1.4", features = ["derive"] }
+
+tikv-jemallocator = "0.5.4"
 
 # web:
 [target.'cfg(target_arch = "wasm32")'.dependencies]

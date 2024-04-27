@@ -42,12 +42,14 @@ async fn main() {
         processing::process::ProcessParams::default()
     };
 
+    let viewer = FilteredViewer::init_with_point(filepath.clone(), processing, range).await;
+
     let native_options = eframe::NativeOptions::default();
     eframe::run_native(
         format!("filtered {filepath:?}").as_str(),
         native_options,
         Box::new(move |_| {
-            Box::new(FilteredViewer::init_with_point(filepath, processing, range))
+            Box::new(viewer)
         }),
     )
     .unwrap();
