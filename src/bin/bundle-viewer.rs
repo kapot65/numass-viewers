@@ -4,10 +4,9 @@ fn main() {
     panic!("this binary is not meant to be run in browser")
 }
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_family = "unix")]
 use tikv_jemallocator::Jemalloc;
-
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_family = "unix")]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 

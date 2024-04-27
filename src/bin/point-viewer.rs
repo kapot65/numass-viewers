@@ -1,8 +1,8 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-#[cfg(not(target_arch = "wasm32"))]
-use tikv_jemallocator::Jemalloc;
 
-#[cfg(not(target_arch = "wasm32"))]
+#[cfg(target_family = "unix")]
+use tikv_jemallocator::Jemalloc;
+#[cfg(target_family = "unix")]
 #[global_allocator]
 static GLOBAL: Jemalloc = Jemalloc;
 
