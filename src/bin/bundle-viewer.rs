@@ -32,7 +32,8 @@ async fn main() {
     eframe::run_native(
         std::fs::canonicalize(&filepath).unwrap().to_str().unwrap(),
         native_options,
-        Box::new(|_| {
+        Box::new(|ctx| {
+            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
             Box::new(BundleViewer::init_with_point(filepath))
         }),
     )

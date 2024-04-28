@@ -43,6 +43,7 @@ async fn main() -> eframe::Result<()> {
         native_options,
         Box::new(|ctx| {
             install_image_loaders(&ctx.egui_ctx);
+            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
             let app = app::DataViewerApp::new();
             if let Some(directory) = opt.directory {
                 *app.root.lock() = FSRepr::expand_dir(directory)

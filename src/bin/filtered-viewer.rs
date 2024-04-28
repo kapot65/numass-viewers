@@ -48,7 +48,8 @@ async fn main() {
     eframe::run_native(
         format!("filtered {filepath:?}").as_str(),
         native_options,
-        Box::new(move |_| {
+        Box::new(move |ctx| {
+            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
             Box::new(viewer)
         }),
     )
