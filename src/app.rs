@@ -240,7 +240,7 @@ impl DataViewerApp {
                             PlotMode::PPT => {
                                 let mut data = String::new();
                                 {
-                                    data.push_str("path\ttime\tcounts\n");
+                                    data.push_str("path\ttime\ttime_raw\tcounts\n");
                                 }
 
                                 for (name, cache) in state_sorted.iter() {
@@ -251,7 +251,8 @@ impl DataViewerApp {
                                                 let temp = PathBuf::from(name);
                                                 temp.file_name().unwrap().to_owned()
                                             };
-                                            data.push_str(&format!("{point_name:?}\t{start_time:?}\t{counts}\n"));
+
+                                            data.push_str(&format!("{point_name:?}\t{start_time:?}\t{}\t{counts}\n", start_time.timestamp()));
                                     }
                                 }
 
