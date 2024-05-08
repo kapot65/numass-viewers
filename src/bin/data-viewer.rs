@@ -88,14 +88,15 @@ fn main() {
     if let Some(ViewerMode::FilteredEvents {
         filepath,
         range,
-        processing
-    }) = request
+        process, 
+        postprocess }) = request
     {
         set_title(format!("filtered {filepath:?}").as_str());
         spawn_local(async move {
             let app = filtered_viewer::FilteredViewer::init_with_point(
                 filepath, 
-                processing, 
+                process,
+                postprocess, 
                 range
             ).await;
 
@@ -103,6 +104,7 @@ fn main() {
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(move |ctx| {
+                    install_image_loaders(&ctx.egui_ctx);
                     ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                     Box::new(app)
                 }),
@@ -119,6 +121,7 @@ fn main() {
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(|ctx| {
+                    install_image_loaders(&ctx.egui_ctx);
                     ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                     Box::new(point_viewer::PointViewer::init_with_point(filepath))
                 }),
@@ -135,6 +138,7 @@ fn main() {
                 "the_canvas_id", // hardcode it
                 web_options,
                 Box::new(|ctx| {
+                    install_image_loaders(&ctx.egui_ctx);
                     ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                     Box::new(bundle_viewer::BundleViewer::init_with_point(filepath))
                 }),

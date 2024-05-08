@@ -3,11 +3,16 @@ use std::{collections::BTreeMap, ops::Range, path::PathBuf, vec};
 use egui_plot::{Legend, PlotUi};
 
 use processing::{
-    process::{convert_to_kev, extract_waveforms, frame_to_events, ProcessParams, StaticProcessParams}, storage::load_point, types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine} 
+    postprocess::{post_process_frame, PostProcessParams},
+    process::{
+        convert_to_kev, extract_waveforms, frame_to_events, ProcessParams, StaticProcessParams,
+    },
+    storage::load_point,
+    types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform},
+    utils::{color_for_index, EguiLine},
 };
 
 use processing::widgets::UserInput;
-
 
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
@@ -19,7 +24,8 @@ extern "C" {
 }
 
 pub struct FilteredViewer<'a> {
-    processing: ProcessParams,
+    process: ProcessParams,
+    postprocess: PostProcessParams,
     range: Range<f32>,
     waveforms: NumassWaveforms<'a>,
     static_params: StaticProcessParams,
@@ -27,11 +33,11 @@ pub struct FilteredViewer<'a> {
     current: usize,
 }
 
-impl<'a> FilteredViewer<'a>  {
-
-    pub async fn init_with_point (
+impl<'a> FilteredViewer<'a> {
+    pub async fn init_with_point(
         filepath: PathBuf,
-        processing: ProcessParams,
+        process: ProcessParams,
+        postprocess: PostProcessParams,
         range: Range<f32>,
     ) -> Self {
         let (waveforms, static_params) = {
@@ -42,7 +48,8 @@ impl<'a> FilteredViewer<'a>  {
         };
 
         let mut viewer = Self {
-            processing,
+            process,
+            postprocess,
             range,
             waveforms,
             indexes: None,
@@ -55,24 +62,24 @@ impl<'a> FilteredViewer<'a>  {
     }
 
     fn update_indexes(&mut self) {
-
         self.current = 0;
 
         let mut new_indexes = vec![];
 
         for (time, frame) in &self.waveforms {
-
-            let events = frame_to_events(
-                frame,
-                &self.processing.algorithm, 
-                &self.static_params,
-                None
+            let events = post_process_frame(
+                frame_to_events(frame, &self.process.algorithm, &self.static_params, None),
+                &self.postprocess,
+                None,
             );
 
             for (_, event) in events {
-                if let FrameEvent::Event {channel, amplitude, .. } = event {
-                    let amplitude = if self.processing.convert_to_kev {
-                        convert_to_kev(&amplitude, channel, &self.processing.algorithm)
+                if let FrameEvent::Event {
+                    channel, amplitude, ..
+                } = event
+                {
+                    let amplitude = if self.process.convert_to_kev {
+                        convert_to_kev(&amplitude, channel, &self.process.algorithm)
                     } else {
                         amplitude
                     };
@@ -82,46 +89,49 @@ impl<'a> FilteredViewer<'a>  {
                     }
                 }
             }
-        };
+        }
 
         self.indexes = Some(new_indexes);
     }
 
     fn plot_processed_frame(
         current: usize,
-        processing: &ProcessParams,
+        process: &ProcessParams,
+        postprocess: &PostProcessParams,
         plot_ui: &mut PlotUi,
         indexes: &[u64],
         static_params: &StaticProcessParams,
-        waveforms: &BTreeMap<u64, NumassFrame<'a>>) {
-
+        waveforms: &BTreeMap<u64, NumassFrame<'a>>,
+    ) {
         let frame = {
             let current_time = indexes[current];
             waveforms.get(&current_time).unwrap().clone()
         };
 
-        let mut events = frame_to_events(
-            &frame, 
-            &processing.algorithm,
-            static_params,
-            Some(plot_ui)
-        );
+        let mut events = frame_to_events(&frame, &process.algorithm, static_params, Some(plot_ui));
 
-        if processing.convert_to_kev {
+        events = post_process_frame(events, postprocess, Some(plot_ui));
+
+        if process.convert_to_kev {
             events.iter_mut().for_each(|(_, event)| {
-                if let FrameEvent::Event { channel: ch_id, amplitude , ..} = event {
-                    *amplitude = convert_to_kev(amplitude, *ch_id, &processing.algorithm)
+                if let FrameEvent::Event {
+                    channel: ch_id,
+                    amplitude,
+                    ..
+                } = event
+                {
+                    *amplitude = convert_to_kev(amplitude, *ch_id, &process.algorithm)
                 }
             });
         }
 
         for (ch_id, waveform) in frame {
             ProcessedWaveform::from(waveform).draw_egui(
-                plot_ui, 
-                Some(&format!("ch# {}", ch_id + 1)), 
-                Some(color_for_index(ch_id as usize)), 
-                Some(1.0), 
-                Some(0)
+                plot_ui,
+                Some(&format!("ch# {}", ch_id + 1)),
+                Some(color_for_index(ch_id as usize)),
+                Some(1.0),
+                Some(0),
             );
         }
     }
@@ -139,17 +149,12 @@ impl<'a> FilteredViewer<'a>  {
             self.current -= 1
         }
     }
-
 }
 
 impl<'a> eframe::App for FilteredViewer<'a> {
-
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
-
-        let indexes_len = self.indexes.as_ref().map(|indexes| {
-            indexes.len()
-        });
+        let indexes_len = self.indexes.as_ref().map(|indexes| indexes.len());
 
         ctx.input(|i| {
             if i.key_pressed(eframe::egui::Key::ArrowLeft) {
@@ -161,8 +166,11 @@ impl<'a> eframe::App for FilteredViewer<'a> {
         });
 
         eframe::egui::SidePanel::left("parameters").show(ctx, |ui| {
+            self.process = self.process.input(ui, ctx);
 
-            self.processing =  self.processing.input(ui, ctx);
+            ui.separator();
+
+            self.postprocess = self.postprocess.input(ui, ctx);
 
             ui.separator();
             let mut min = self.range.start;
@@ -178,11 +186,10 @@ impl<'a> eframe::App for FilteredViewer<'a> {
 
         eframe::egui::TopBottomPanel::top("position").show(ctx, |ui| {
             ui.horizontal(|ui| {
-
                 #[cfg(not(target_arch = "wasm32"))]
                 let width = {
                     let mut x = 0.0;
-                    ctx.input(|i| {x = i.viewport().inner_rect.unwrap().size().x});
+                    ctx.input(|i| x = i.viewport().inner_rect.unwrap().size().x);
                     x
                 };
                 #[cfg(target_arch = "wasm32")]
@@ -196,32 +203,27 @@ impl<'a> eframe::App for FilteredViewer<'a> {
                 ui.style_mut().spacing.slider_width = width - 450.0;
 
                 if let Some(len) = indexes_len {
-                    ui.add(
-                        eframe::egui::Slider::new(&mut self.current, 0..=len - 1)
-                            .step_by(1.0),
-                    );
-                    if ui.button("<").clicked() 
-                    {
+                    ui.add(eframe::egui::Slider::new(&mut self.current, 0..=len - 1).step_by(1.0));
+                    if ui.button("<").clicked() {
                         self.dec();
                     }
-                    if ui.button(">").clicked() 
-                    {
+                    if ui.button(">").clicked() {
                         self.inc();
                     }
                 }
 
                 if let Some(indexes) = self.indexes.as_ref() {
-                    ui.label(format!("{:.3} ms", indexes[self.current] as f64 / 1e6));    
+                    ui.label(format!("{:.3} ms", indexes[self.current] as f64 / 1e6));
                 }
             })
         });
 
         eframe::egui::CentralPanel::default().show(ctx, |ui| {
             if let Some(indexes) = self.indexes.as_ref() {
-                    egui_plot::Plot::new("waveforms").legend(Legend::default())
+                egui_plot::Plot::new("waveforms")
+                    .legend(Legend::default())
                     .x_axis_formatter(|mark, _, _| format!("{:.3} μs", (mark.value * 8.0) / 1000.0))
                     .show(ui, |plot_ui| {
-
                         if indexes.is_empty() {
                             return;
                         }
@@ -230,11 +232,13 @@ impl<'a> eframe::App for FilteredViewer<'a> {
 
                         FilteredViewer::plot_processed_frame(
                             self.current,
-                            &self.processing,
+                            &self.process,
+                            &self.postprocess,
                             plot_ui,
                             indexes,
                             &self.static_params,
-                            &self.waveforms);
+                            &self.waveforms,
+                        );
                     });
             } else {
                 ui.spinner();

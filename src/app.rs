@@ -644,6 +644,7 @@ impl eframe::App for DataViewerApp {
                 });
 
                 let process = self.processing_params.lock().process.clone();
+                let postprocess = self.processing_params.lock().post_process;
 
                 if filtered_viewer_button.clicked() {
                     let (filepath, _) = opened_files[0];
@@ -653,14 +654,16 @@ impl eframe::App for DataViewerApp {
                         command.arg(filepath)
                         .arg("--min").arg(left_border.max(0.0).to_string())
                         .arg("--max").arg(right_border.max(0.0).to_string())
-                        .arg("--processing").arg(serde_json::to_string(&process).unwrap());
+                        .arg("--process").arg(serde_json::to_string(&process).unwrap())
+                        .arg("--postprocess").arg(serde_json::to_string(&postprocess).unwrap());
                         
                         command.spawn().unwrap();
                     }
                     #[cfg(target_arch = "wasm32")] {
                         let search = serde_qs::to_string(&ViewerMode::FilteredEvents {
                             filepath: PathBuf::from(filepath),
-                            processing: process,
+                            process,
+                            postprocess,
                             range: left_border.max(0.0)..right_border.max(0.0)}).unwrap();
                         window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
                     }

@@ -14,6 +14,7 @@ fn main() {
 #[tokio::main]
 async fn main() {
     use clap::Parser;
+    use egui_extras::install_image_loaders;
     use viewers::filtered_viewer::FilteredViewer;
 
     #[derive(Parser, Debug)]
@@ -27,28 +28,38 @@ async fn main() {
         /// maximal amplitude in range
         #[clap(long, default_value_t = 27.0)]
         max: f32,
-        /// processing params serialized to json
+        /// process params serialized to json
         #[clap(long)]
-        processing: Option<String>
+        process: Option<String>,
+        /// postprocess params serialized to json
+        #[clap(long)]
+        postprocess: Option<String>
     }
 
     let args = Opt::parse();
     let filepath = args.filepath;
     let range = args.min..args.max;
 
-    let processing = if let Some(processing) = args.processing {
-        serde_json::from_str(&processing).expect("cant parse algorithm param")
+    let process = if let Some(process) = args.process {
+        serde_json::from_str(&process).expect("cant parse algorithm param")
     } else {
         processing::process::ProcessParams::default()
     };
 
-    let viewer = FilteredViewer::init_with_point(filepath.clone(), processing, range).await;
+    let postprocess = if let Some(postprocess) = args.postprocess {
+        serde_json::from_str(&postprocess).expect("cant parse postprocess param")
+    } else {
+        processing::postprocess::PostProcessParams::default()
+    };
+
+    let viewer = FilteredViewer::init_with_point(filepath.clone(), process, postprocess, range).await;
 
     let native_options = eframe::NativeOptions::default();
     eframe::run_native(
         format!("filtered {filepath:?}").as_str(),
         native_options,
         Box::new(move |ctx| {
+            install_image_loaders(&ctx.egui_ctx);
             ctx.egui_ctx.set_visuals(egui::Visuals::dark());
             Box::new(viewer)
         }),
