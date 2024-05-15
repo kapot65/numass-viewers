@@ -1,6 +1,7 @@
 use std::{collections::BTreeMap, ops::Range, path::PathBuf, vec};
 
-use egui_plot::{Legend, PlotUi};
+use egui::Color32;
+use egui_plot::{Legend, MarkerShape, PlotUi, Points, VLine};
 
 use processing::{
     postprocess::{post_process_frame, PostProcessParams},
@@ -68,7 +69,7 @@ impl<'a> FilteredViewer<'a> {
 
         for (time, frame) in &self.waveforms {
             let events = post_process_frame(
-                frame_to_events(frame, &self.process.algorithm, &self.static_params, None),
+                frame_to_events(frame, &self.process.algorithm, &self.static_params, &mut None),
                 &self.postprocess,
                 None,
             );
@@ -108,10 +109,37 @@ impl<'a> FilteredViewer<'a> {
             waveforms.get(&current_time).unwrap().clone()
         };
 
-        let mut events = frame_to_events(&frame, &process.algorithm, static_params, Some(plot_ui));
+        let mut events = frame_to_events(&frame, &process.algorithm, static_params, &mut Some(plot_ui));
+
+        events.iter().enumerate().for_each(|(idx, (pos, event))| {
+            match event {
+                FrameEvent::Event { channel, amplitude, size } => {
+                    let ch = channel + 1;
+                    let name = format!("ev#{idx} ch# {ch}");
+
+                    plot_ui.vline(VLine::new((*pos as f64) / 8.0).color(color_for_index(*channel as usize)).name(name.clone()));
+                    plot_ui.vline(VLine::new((*pos + *size * 8) as f64 / 8.0).color(color_for_index(*channel as usize)).name(name.clone()));
+                    plot_ui.points(Points::new(vec![[*pos as f64 / 8.0, *amplitude as f64]])
+                        .color(color_for_index(*channel as usize))
+                        .shape(MarkerShape::Diamond)
+                        .filled(false)
+                        .radius(10.0)
+                        .name(name)
+                    );
+                }
+                FrameEvent::Reset { size } => {
+                    plot_ui.vline(VLine::new(*pos as f64 / 8.0).color(Color32::WHITE).name("RESET"));
+                    plot_ui.vline(VLine::new((*pos + *size * 8) as f64 / 8.0).color(Color32::WHITE).name("RESET"));
+                }
+                _ => {
+                    // TODO: implement
+                }
+            }
+        });
 
         events = post_process_frame(events, postprocess, Some(plot_ui));
 
+        // TODO: dont need conversion since we dont plot it
         if process.convert_to_kev {
             events.iter_mut().for_each(|(_, event)| {
                 if let FrameEvent::Event {
