@@ -69,7 +69,12 @@ impl<'a> FilteredViewer<'a> {
 
         for (time, frame) in &self.waveforms {
             let events = post_process_frame(
-                frame_to_events(frame, &self.process.algorithm, &self.static_params, &mut None),
+                frame_to_events(
+                    frame,
+                    &self.process.algorithm,
+                    &self.static_params,
+                    &mut None,
+                ),
                 &self.postprocess,
                 None,
             );
@@ -109,33 +114,72 @@ impl<'a> FilteredViewer<'a> {
             waveforms.get(&current_time).unwrap().clone()
         };
 
-        let mut events = frame_to_events(&frame, &process.algorithm, static_params, &mut Some(plot_ui));
+        let mut events = frame_to_events(
+            &frame,
+            &process.algorithm,
+            static_params,
+            &mut Some(plot_ui),
+        );
 
-        events.iter().enumerate().for_each(|(idx, (pos, event))| {
-            match event {
-                FrameEvent::Event { channel, amplitude, size } => {
+        events
+            .iter()
+            .enumerate()
+            .for_each(|(idx, (pos, event))| match event {
+                FrameEvent::Event {
+                    channel,
+                    amplitude,
+                    size,
+                } => {
                     let ch = channel + 1;
                     let name = format!("ev#{idx} ch# {ch}");
 
-                    plot_ui.vline(VLine::new((*pos as f64) / 8.0).color(color_for_index(*channel as usize)).name(name.clone()));
-                    plot_ui.vline(VLine::new((*pos + *size * 8) as f64 / 8.0).color(color_for_index(*channel as usize)).name(name.clone()));
-                    plot_ui.points(Points::new(vec![[*pos as f64 / 8.0, *amplitude as f64]])
-                        .color(color_for_index(*channel as usize))
-                        .shape(MarkerShape::Diamond)
-                        .filled(false)
-                        .radius(10.0)
-                        .name(name)
+                    plot_ui.vline(
+                        VLine::new((*pos as f64) / 8.0)
+                            .color(color_for_index(*channel as usize))
+                            .name(name.clone()),
+                    );
+                    plot_ui.vline(
+                        VLine::new((*pos + *size * 8) as f64 / 8.0)
+                            .color(color_for_index(*channel as usize))
+                            .name(name.clone()),
+                    );
+                    plot_ui.points(
+                        Points::new(vec![[*pos as f64 / 8.0, *amplitude as f64]])
+                            .color(color_for_index(*channel as usize))
+                            .shape(MarkerShape::Diamond)
+                            .filled(false)
+                            .radius(10.0)
+                            .name(name),
                     );
                 }
                 FrameEvent::Reset { size } => {
-                    plot_ui.vline(VLine::new(*pos as f64 / 8.0).color(Color32::WHITE).name("RESET"));
-                    plot_ui.vline(VLine::new((*pos + *size * 8) as f64 / 8.0).color(Color32::WHITE).name("RESET"));
+                    plot_ui.vline(
+                        VLine::new(*pos as f64 / 8.0)
+                            .color(Color32::WHITE)
+                            .name("RESET"),
+                    );
+                    plot_ui.vline(
+                        VLine::new((*pos + *size * 8) as f64 / 8.0)
+                            .color(Color32::WHITE)
+                            .name("RESET"),
+                    );
                 }
-                _ => {
-                    // TODO: implement
+                FrameEvent::Overflow { channel, size } => {
+                    plot_ui.vline(
+                        VLine::new(*pos as f64 / 8.0)
+                            .color(color_for_index(*channel as usize))
+                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                            .name(format!("OVERFLOW ch# {}", channel)),
+                    );
+                    plot_ui.vline(
+                        VLine::new((*pos + *size * 8) as f64 / 8.0)
+                            .color(color_for_index(*channel as usize))
+                            .style(egui_plot::LineStyle::Dashed { length: 10.0 })
+                            .name(format!("OVERFLOW ch# {}", channel)),
+                    );
                 }
-            }
-        });
+                FrameEvent::Frame { .. } => {}
+            });
 
         events = post_process_frame(events, postprocess, Some(plot_ui));
 
