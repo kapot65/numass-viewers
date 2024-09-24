@@ -46,7 +46,7 @@ async fn main() -> eframe::Result<()> {
             ctx.egui_ctx.set_visuals(egui::Visuals::dark());
             let app = app::DataViewerApp::new();
             if let Some(directory) = opt.directory {
-                *app.root.lock() = FSRepr::expand_dir(directory)
+                *app.root.try_lock().unwrap() = Some(FSRepr::new(directory))
             }
             Box::new(app)
         }),

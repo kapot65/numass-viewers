@@ -6,7 +6,7 @@ use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui }};
 use egui_plot::{Legend, Plot, Points};
 
 use globset::GlobMatcher;
-use processing::{viewer::ViewerState, widgets::UserInput};
+use processing::{storage::LoadState, viewer::ViewerState, widgets::UserInput};
 
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -49,7 +49,10 @@ pub struct ProcessingStatus {
 }
 
 pub struct DataViewerApp {
-    pub root: Arc<Mutex<Option<FSRepr>>>,
+    #[cfg(not(target_arch = "wasm32"))]
+    pub root: Arc<tokio::sync::Mutex<Option<FSRepr>>>,
+    #[cfg(target_arch = "wasm32")]
+    pub root: Arc<std::sync::Mutex<Option<FSRepr>>>,
     select_single: bool,
     glob_pattern: String,
     plot_mode: PlotMode,
@@ -70,7 +73,10 @@ impl DataViewerApp {
             running: false, total: 0, processed: 0 }));
 
         Self {
-            root: Arc::new(Mutex::new(None)),
+            #[cfg(not(target_arch = "wasm32"))]
+            root: Arc::new(tokio::sync::Mutex::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            root: Arc::new(std::sync::Mutex::new(None)),
             select_single: false,
             glob_pattern: "*/Tritium_1/set_[123]/p*(HV1=14000)".to_owned(),
             state,
@@ -86,7 +92,15 @@ impl DataViewerApp {
     }
 
     fn files_editor(&mut self, ui: &mut Ui) {
-        let root_lock = self.root.lock().clone();
+        
+        let mut root_copy = {
+            if let Ok(root) = self.root.try_lock() {
+                root.clone()
+            } else {
+                ui.spinner();
+                return;
+            }
+        };
 
         ui.checkbox(&mut self.select_single, "select single");
 
@@ -98,7 +112,7 @@ impl DataViewerApp {
 
                 let glob = glob.unwrap().compile_matcher();
 
-                let root = self.root.lock().clone();
+                let root = root_copy.clone();
                 let state = Arc::clone(&self.state);
 
                 if let Some(root) = root {
@@ -107,12 +121,12 @@ impl DataViewerApp {
     
                         fn process_leaf(leaf: FSRepr, glob: &GlobMatcher, matched: &mut Vec<String>) {
                             match leaf {
-                                FSRepr::File {path} => {
+                                FSRepr::File {path, ..} => {
                                     if glob.is_match(&path) {
                                         matched.push(path.to_str().unwrap().to_owned())
                                     }
                                 }
-                                FSRepr::Directory { path: _, children } => {
+                                FSRepr::Directory { children, .. } => {
                                     for child in children {
                                         process_leaf(child, glob, matched)
                                     }
@@ -147,32 +161,28 @@ impl DataViewerApp {
                 spawn(async move {
                     #[cfg(not(target_arch = "wasm32"))]
                     if let Some(root_path) = rfd::FileDialog::new().pick_folder() {
-                        *root.lock() = FSRepr::expand_dir(root_path)
+                        root.lock().await.replace(FSRepr::new(root_path));
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        let resp = Request::get("/api/files").send().await.unwrap();
-                        *root.lock() = Some(resp.json::<FSRepr>().await.unwrap())
+                        let resp = Request::get("/api/root").send().await.unwrap();
+                        root.lock().unwrap().replace(resp.json::<FSRepr>().await.unwrap());
                     }
                 });
             }
 
-            let path = root_lock.clone().map(|root| match root {
-                FSRepr::File { path } => path,
-                FSRepr::Directory { path, children: _ } => path,
-            });
+            let path = root_copy.clone().map(|root| root.to_filename());
             if path.is_some() && ui.button("reload").clicked() {
                 #[cfg(not(target_arch = "wasm32"))]
                 #[allow(clippy::unnecessary_unwrap)]
                 {
-                    *self.root.lock() = FSRepr::expand_dir(path.unwrap());
+                    unimplemented!();
                 }
                 #[cfg(target_arch = "wasm32")]
                 {
-                    let root = self.root.clone();
+                    // let root = self.root.clone();
                     spawn(async move {
-                        let resp = Request::get("/api/files").send().await.unwrap();
-                        *root.lock() = Some(resp.json::<FSRepr>().await.unwrap())
+                        unimplemented!();
                     })
                 }
             }
@@ -306,20 +316,38 @@ impl DataViewerApp {
         });
 
         egui::containers::ScrollArea::new([false, true]).show(ui, |ui| {
-            if let Some(root) = &root_lock {
+            if let Some(root) = &mut root_copy {
 
-                let mut updated = false;
+                let mut state_after = FileTreeState {
+                    need_load: false,
+                    need_process: false
+                };
+
                 file_tree_entry(
                     ui, root, 
                     &self.select_single,
                     &mut self.state.lock(),
-                    &mut updated,
+                    &mut state_after,
                 );
 
-                if updated && self.select_single {
+                if state_after.need_process && self.select_single {
                     self.process();
                 }
+
+                if state_after.need_load  {
+                    let root_out = Arc::clone(&self.root);
+                    let mut root = root.clone();
+                    
+                    spawn(async move {
+                        if let Ok(mut out) = root_out.try_lock() {
+                            root.expand_reccurently().await;
+                            out.replace(root);
+                        }
+                    });
+                }
             }
+
+            
         });
     }
 
@@ -425,15 +453,21 @@ impl Default for DataViewerApp {
     }
 }
 
+#[derive(Debug)]
+struct FileTreeState {
+    pub need_process: bool,
+    pub need_load: bool
+}
+
 fn file_tree_entry(
     ui: &mut egui::Ui,
-    entry: &FSRepr,
+    entry: &mut FSRepr,
     select_single: &bool,
     opened_files: &mut BTreeMap<String, PointState>,
-    updated: &mut bool,
+    state_after: &mut FileTreeState,
 ) {
     match entry {
-        FSRepr::File { path } => {
+        FSRepr::File { path, .. } => {
             let key = path.to_str().unwrap().to_string();
             let cache = opened_files
                 .entry(key.clone())
@@ -478,7 +512,7 @@ fn file_tree_entry(
                         cache.opened = false;
                     }
                 }
-                *updated = true;
+                state_after.need_process = true;
             } else if let Some(opened) = change_set {
                 let parent_folder = path.parent().unwrap().to_str().unwrap();
                 let filtered_keys = opened_files
@@ -489,18 +523,23 @@ fn file_tree_entry(
                 for key in filtered_keys {
                     opened_files.get_mut(&key).unwrap().opened = opened;
                 }
-                *updated = true;
+                state_after.need_process = true;
             }
         }
 
-        FSRepr::Directory { path, children } => {
-            egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
+        FSRepr::Directory { path, children, load_state, .. } => {
+            let header =egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
                 .id_source(path.to_str().unwrap())
                 .show(ui, |ui| {
                     for child in children {
-                        file_tree_entry(ui, child, select_single, opened_files, updated)
+                        file_tree_entry(ui, child, select_single, opened_files, state_after)
                     }
                 });
+                
+            if header.fully_open() && load_state == &LoadState::NotLoaded {
+                *load_state = LoadState::NeedLoad;
+                state_after.need_load = true;
+            }
         }
     }
 }
