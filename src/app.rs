@@ -156,7 +156,7 @@ impl DataViewerApp {
 
         ui.horizontal(|ui| {
             if ui.button("open").clicked() {
-                let root = self.root.clone();
+                let root = Arc::clone(&self.root);
 
                 spawn(async move {
                     #[cfg(not(target_arch = "wasm32"))]
@@ -173,17 +173,16 @@ impl DataViewerApp {
 
             let path = root_copy.clone().map(|root| root.to_filename());
             if path.is_some() && ui.button("reload").clicked() {
-                #[cfg(not(target_arch = "wasm32"))]
-                #[allow(clippy::unnecessary_unwrap)]
-                {
-                    unimplemented!();
-                }
-                #[cfg(target_arch = "wasm32")]
-                {
-                    // let root = self.root.clone();
+
+                if let Some(mut root) = root_copy.clone() {
+                    let root_out = Arc::clone(&self.root);
+
                     spawn(async move {
-                        unimplemented!();
-                    })
+                        if let Ok(mut out) = root_out.try_lock() {
+                            root.update_reccurently().await;
+                            out.replace(root);
+                        }
+                    });
                 }
             }
 
