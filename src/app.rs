@@ -2,30 +2,40 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use eframe::{epaint::Color32, egui::{self, mutex::Mutex, Ui }};
+use eframe::{
+    egui::{self, mutex::Mutex, Ui},
+    epaint::Color32,
+};
 use egui_plot::{Legend, Plot, Points};
 
 use globset::GlobMatcher;
 use processing::{storage::LoadState, viewer::ViewerState, widgets::UserInput};
 
-
 #[cfg(not(target_arch = "wasm32"))]
 use {
-    processing::{storage::FSRepr, viewer::PointState},
+    crate::process_point,
     home::home_dir,
+    processing::{storage::FSRepr, viewer::PointState},
     std::fs::File,
     std::io::Write,
     tokio::spawn,
     which::which,
-    crate::process_point
 };
 
 #[cfg(target_arch = "wasm32")]
 use {
-    eframe::web_sys::window, gloo::{net::http::Request, worker::{Spawnable, oneshot::OneshotBridge}},
-    wasm_bindgen::prelude::*, wasm_bindgen_futures::spawn_local as spawn,
-    processing::{viewer::{PointState, ViewerMode}, storage::{FSRepr, api_url}}, 
-    crate::{PointProcessor, hyperlink::HyperlinkNewWindow}
+    crate::{hyperlink::HyperlinkNewWindow, PointProcessor},
+    eframe::web_sys::window,
+    gloo::{
+        net::http::Request,
+        worker::{oneshot::OneshotBridge, Spawnable},
+    },
+    processing::{
+        storage::{api_url, FSRepr},
+        viewer::{PointState, ViewerMode},
+    },
+    wasm_bindgen::prelude::*,
+    wasm_bindgen_futures::spawn_local as spawn,
 };
 
 #[cfg(target_arch = "wasm32")]
@@ -45,7 +55,7 @@ pub enum PlotMode {
 pub struct ProcessingStatus {
     pub running: bool,
     pub total: usize,
-    pub processed: usize
+    pub processed: usize,
 }
 
 pub struct DataViewerApp {
@@ -62,15 +72,17 @@ pub struct DataViewerApp {
     state: Arc<Mutex<BTreeMap<String, PointState>>>,
 
     #[cfg(target_arch = "wasm32")]
-    processor_pool: Vec<OneshotBridge<PointProcessor>>
+    processor_pool: Vec<OneshotBridge<PointProcessor>>,
 }
 
 impl DataViewerApp {
     pub fn new() -> Self {
-
         let state = Arc::new(Mutex::new(BTreeMap::new()));
-        let processing_status = Arc::new(Mutex::new(ProcessingStatus { 
-            running: false, total: 0, processed: 0 }));
+        let processing_status = Arc::new(Mutex::new(ProcessingStatus {
+            running: false,
+            total: 0,
+            processed: 0,
+        }));
 
         Self {
             #[cfg(not(target_arch = "wasm32"))]
@@ -85,14 +97,18 @@ impl DataViewerApp {
             plot_mode: PlotMode::Histogram,
             #[cfg(target_arch = "wasm32")]
             processor_pool: {
-                let concurrency = gloo::utils::window().navigator().hardware_concurrency() as usize - 1;
-                (0..concurrency).collect::<std::vec::Vec<usize>>().into_iter().map(|_| PointProcessor::spawner().spawn("./worker.js")).collect::<Vec<_>>()
-            }
+                let concurrency =
+                    gloo::utils::window().navigator().hardware_concurrency() as usize - 1;
+                (0..concurrency)
+                    .collect::<std::vec::Vec<usize>>()
+                    .into_iter()
+                    .map(|_| PointProcessor::spawner().spawn("./worker.js"))
+                    .collect::<Vec<_>>()
+            },
         }
     }
 
     fn files_editor(&mut self, ui: &mut Ui) {
-        
         let mut root_copy = {
             if let Ok(root) = self.root.try_lock() {
                 root.clone()
@@ -105,11 +121,16 @@ impl DataViewerApp {
         ui.checkbox(&mut self.select_single, "select single");
 
         ui.horizontal(|ui| {
-            ui.add_sized([200.0, 20.0], egui::TextEdit::singleline(&mut self.glob_pattern));
+            ui.add_sized(
+                [200.0, 20.0],
+                egui::TextEdit::singleline(&mut self.glob_pattern),
+            );
 
             let glob = globset::Glob::new(&self.glob_pattern);
-            if ui.add_enabled(glob.is_ok(), egui::Button::new("match")).clicked() {
-
+            if ui
+                .add_enabled(glob.is_ok(), egui::Button::new("match"))
+                .clicked()
+            {
                 let glob = glob.unwrap().compile_matcher();
 
                 let root = root_copy.clone();
@@ -118,10 +139,14 @@ impl DataViewerApp {
                 if let Some(root) = root {
                     spawn(async move {
                         let mut matched = vec![];
-    
-                        fn process_leaf(leaf: FSRepr, glob: &GlobMatcher, matched: &mut Vec<String>) {
+
+                        fn process_leaf(
+                            leaf: FSRepr,
+                            glob: &GlobMatcher,
+                            matched: &mut Vec<String>,
+                        ) {
                             match leaf {
-                                FSRepr::File {path, ..} => {
+                                FSRepr::File { path, .. } => {
                                     if glob.is_match(&path) {
                                         matched.push(path.to_str().unwrap().to_owned())
                                     }
@@ -134,25 +159,20 @@ impl DataViewerApp {
                             }
                         }
                         process_leaf(root, &glob, &mut matched);
-    
+
                         let mut state = state.lock();
                         state.clear();
-    
+
                         for path in matched {
-                            state.entry(path).or_insert(PointState { 
-                                opened: true, 
-                                histogram: None, 
-                                voltage: None,
-                                start_time: None,
-                                counts: None,
-                                modified: None
-                            }).opened = true;
+                            state
+                                .entry(path)
+                                .or_insert(EMPTY_POINT)
+                                .opened = true;
                         }
                     });
                 }
             }
         });
-        
 
         ui.horizontal(|ui| {
             if ui.button("open").clicked() {
@@ -166,14 +186,15 @@ impl DataViewerApp {
                     #[cfg(target_arch = "wasm32")]
                     {
                         let resp = Request::get("/api/root").send().await.unwrap();
-                        root.lock().unwrap().replace(resp.json::<FSRepr>().await.unwrap());
+                        root.lock()
+                            .unwrap()
+                            .replace(resp.json::<FSRepr>().await.unwrap());
                     }
                 });
             }
 
             let path = root_copy.clone().map(|root| root.to_filename());
             if path.is_some() && ui.button("reload").clicked() {
-
                 if let Some(mut root) = root_copy.clone() {
                     let root_out = Arc::clone(&self.root);
 
@@ -187,8 +208,10 @@ impl DataViewerApp {
             }
 
             let ProcessingStatus {
-                running, total, processed
-            } =  *self.processing_status.lock();
+                running,
+                total,
+                processed,
+            } = *self.processing_status.lock();
 
             if running {
                 ui.horizontal(|ui| {
@@ -216,7 +239,6 @@ impl DataViewerApp {
                     let save_folder = Some(PathBuf::new());
 
                     if let Some(save_folder) = save_folder {
-
                         let state_sorted = {
                             let mut state = state.iter().collect::<Vec<_>>();
                             state.sort_by(|(key_1, _), (key_2, _)| natord::compare(key_1, key_2));
@@ -231,12 +253,12 @@ impl DataViewerApp {
                                             let temp = PathBuf::from(name);
                                             temp.file_name().unwrap().to_owned()
                                         };
-    
+
                                         let data = histogram.to_csv('\t');
-    
+
                                         let mut filepath = save_folder.clone();
                                         filepath.push(point_name);
-    
+
                                         #[cfg(not(target_arch = "wasm32"))]
                                         {
                                             std::fs::write(filepath, data).unwrap();
@@ -253,15 +275,21 @@ impl DataViewerApp {
                                 }
 
                                 for (name, cache) in state_sorted.iter() {
-                                    if let PointState { 
-                                        start_time: Some(start_time), counts: Some(counts), .. 
-                                    } = cache {
-                                            let point_name = {
-                                                let temp = PathBuf::from(name);
-                                                temp.file_name().unwrap().to_owned()
-                                            };
+                                    if let PointState {
+                                        start_time: Some(start_time),
+                                        counts: Some(counts),
+                                        ..
+                                    } = cache
+                                    {
+                                        let point_name = {
+                                            let temp = PathBuf::from(name);
+                                            temp.file_name().unwrap().to_owned()
+                                        };
 
-                                            data.push_str(&format!("{point_name:?}\t{start_time:?}\t{}\t{counts}\n", start_time.timestamp()));
+                                        data.push_str(&format!(
+                                            "{point_name:?}\t{start_time:?}\t{}\t{counts}\n",
+                                            start_time.timestamp()
+                                        ));
                                     }
                                 }
 
@@ -277,24 +305,26 @@ impl DataViewerApp {
                                 download(filepath.to_str().unwrap(), &data);
                             }
                             PlotMode::PPV => {
-
                                 let mut data = String::new();
                                 {
                                     data.push_str("path\tvoltage\tcounts\n");
                                 }
-    
-                                for (name, cache) in state_sorted.iter() {
 
-                                    if let PointState { 
-                                        counts: Some(counts), voltage: Some(voltage), .. 
-                                    } = cache {
+                                for (name, cache) in state_sorted.iter() {
+                                    if let PointState {
+                                        counts: Some(counts),
+                                        voltage: Some(voltage),
+                                        ..
+                                    } = cache
+                                    {
                                         let point_name = {
                                             let temp = PathBuf::from(name);
                                             temp.file_name().unwrap().to_owned()
                                         };
-                                        data.push_str(&format!("{point_name:?}\t{voltage}\t{counts}\n"));
+                                        data.push_str(&format!(
+                                            "{point_name:?}\t{voltage}\t{counts}\n"
+                                        ));
                                     }
-
                                 }
 
                                 let mut filepath = save_folder;
@@ -316,14 +346,14 @@ impl DataViewerApp {
 
         egui::containers::ScrollArea::new([false, true]).show(ui, |ui| {
             if let Some(root) = &mut root_copy {
-
                 let mut state_after = FileTreeState {
                     need_load: false,
-                    need_process: false
+                    need_process: false,
                 };
 
                 file_tree_entry(
-                    ui, root, 
+                    ui,
+                    root,
                     &self.select_single,
                     &mut self.state.lock(),
                     &mut state_after,
@@ -333,10 +363,10 @@ impl DataViewerApp {
                     self.process();
                 }
 
-                if state_after.need_load  {
+                if state_after.need_load {
                     let root_out = Arc::clone(&self.root);
                     let mut root = root.clone();
-                    
+
                     spawn(async move {
                         if let Ok(mut out) = root_out.try_lock() {
                             root.expand_reccurently().await;
@@ -345,13 +375,10 @@ impl DataViewerApp {
                     });
                 }
             }
-
-            
         });
     }
 
     pub fn process(&self) {
-
         let changed = self.processing_params.lock().changed;
         self.processing_params.lock().changed = false;
 
@@ -390,21 +417,29 @@ impl DataViewerApp {
             let status = Arc::clone(&status);
 
             // get random worker from pool
-            #[cfg(target_arch = "wasm32")] 
+            #[cfg(target_arch = "wasm32")]
             let mut point_processor = {
                 let concurrency = self.processor_pool.len();
-                let worker_num = js_sys::eval(
-                    format!("Math.floor( Math.random() * {concurrency})").as_str())
-                    .unwrap().as_f64().unwrap() as usize;
+                let worker_num =
+                    js_sys::eval(format!("Math.floor( Math.random() * {concurrency})").as_str())
+                        .unwrap()
+                        .as_f64()
+                        .unwrap() as usize;
                 self.processor_pool[worker_num].fork()
             };
 
             let processing = params.clone();
             spawn(async move {
-                let modified = processing::storage::load_modified_time(filepath.clone().into()).await;
+                let modified =
+                    processing::storage::load_modified_time(filepath.clone().into()).await;
                 if let Some(modified) = modified {
-                    let conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
-                    if let Some(&PointState { modified: Some(modified_2), .. }) = conf.get(&filepath) {
+                    let conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> =
+                        configuration_local.lock();
+                    if let Some(&PointState {
+                        modified: Some(modified_2),
+                        ..
+                    }) = conf.get(&filepath)
+                    {
                         if !changed && modified <= modified_2 {
                             crate::inc_status(status);
                             return;
@@ -413,33 +448,28 @@ impl DataViewerApp {
                 }
 
                 #[cfg(not(target_arch = "wasm32"))]
-                let point_state = process_point(filepath.clone().into(),
-                    processing.process,
-                    processing.post_process,
-                    processing.histogram
-                ).await;
-                #[cfg(target_arch = "wasm32")]
-                let point_state = point_processor.run((
+                let point_state = process_point(
                     filepath.clone().into(),
                     processing.process,
                     processing.post_process,
-                    processing.histogram
-                )).await;
+                    processing.histogram,
+                )
+                .await;
+                #[cfg(target_arch = "wasm32")]
+                let point_state = point_processor
+                    .run((
+                        filepath.clone().into(),
+                        processing.process,
+                        processing.post_process,
+                        processing.histogram,
+                    ))
+                    .await;
 
-                let point_state = point_state.unwrap_or(PointState { 
-                    opened: false, 
-                    histogram: None, 
-                    voltage: None,
-                    start_time: None,
-                    modified: None,
-                    counts: None 
-                });
+                let point_state = point_state.unwrap_or(EMPTY_POINT);
 
-                let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> = configuration_local.lock();
-                conf.insert(
-                    filepath.to_owned(),
-                    point_state,
-                );
+                let mut conf: egui::mutex::MutexGuard<'_, BTreeMap<String, PointState>> =
+                    configuration_local.lock();
+                conf.insert(filepath.to_owned(), point_state);
                 crate::inc_status(status);
             });
         }
@@ -455,8 +485,18 @@ impl Default for DataViewerApp {
 #[derive(Debug)]
 struct FileTreeState {
     pub need_process: bool,
-    pub need_load: bool
+    pub need_load: bool,
 }
+
+const EMPTY_POINT: PointState = PointState {
+    opened: false,
+    histogram: None,
+    voltage: None,
+    start_time: None,
+    acquisition_time: None,
+    counts: None,
+    modified: None,
+};
 
 fn file_tree_entry(
     ui: &mut egui::Ui,
@@ -468,24 +508,13 @@ fn file_tree_entry(
     match entry {
         FSRepr::File { path, .. } => {
             let key = path.to_str().unwrap().to_string();
-            let cache = opened_files
-                .entry(key.clone())
-                .or_insert(PointState {
-                    opened: false,
-                    histogram: None,
-                    counts: None,
-                    voltage: None,
-                    modified: None,
-                    start_time: None
-                });
+            let cache = opened_files.entry(key.clone()).or_insert(EMPTY_POINT);
 
             let mut change_set = None;
             let mut exclusive_point = None;
 
             ui.horizontal(|ui| {
-                
                 if ui.checkbox(&mut cache.opened, "").changed() {
-
                     if cache.opened && *select_single {
                         exclusive_point = Some(key)
                     }
@@ -499,7 +528,8 @@ fn file_tree_entry(
 
                 #[cfg(not(target_arch = "wasm32"))]
                 ui.label(filename);
-                #[cfg(target_arch = "wasm32")] {
+                #[cfg(target_arch = "wasm32")]
+                {
                     let hyperlink = HyperlinkNewWindow::new(filename, api_url("api/meta", path));
                     ui.add(hyperlink);
                 }
@@ -526,15 +556,20 @@ fn file_tree_entry(
             }
         }
 
-        FSRepr::Directory { path, children, load_state, .. } => {
-            let header =egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
+        FSRepr::Directory {
+            path,
+            children,
+            load_state,
+            ..
+        } => {
+            let header = egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
                 .id_source(path.to_str().unwrap())
                 .show(ui, |ui| {
                     for child in children {
                         file_tree_entry(ui, child, select_single, opened_files, state_after)
                     }
                 });
-                
+
             if header.fully_open() && load_state == &LoadState::NotLoaded {
                 *load_state = LoadState::NeedLoad;
                 state_after.need_load = true;
@@ -544,7 +579,6 @@ fn file_tree_entry(
 }
 
 fn params_editor(ui: &mut Ui, ctx: &egui::Context, state: ViewerState) -> ViewerState {
-
     let process = state.process.input(ui, ctx);
 
     ui.separator();
@@ -554,18 +588,17 @@ fn params_editor(ui: &mut Ui, ctx: &egui::Context, state: ViewerState) -> Viewer
     ui.separator();
 
     let histogram = state.histogram.input(ui, ctx);
-    
-    let changed = state.changed || (
-        process != state.process || 
-        post_process != state.post_process ||
-        histogram != state.histogram
-    );
+
+    let changed = state.changed
+        || (process != state.process
+            || post_process != state.post_process
+            || histogram != state.histogram);
 
     ViewerState {
         process,
         post_process,
         histogram,
-        changed
+        changed,
     }
 }
 
@@ -586,19 +619,24 @@ impl eframe::App for DataViewerApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             let state = self.state.lock();
 
-            let thickness = if ctx.style().visuals.dark_mode { 1.0 } else { 2.0 };
+            let thickness = if ctx.style().visuals.dark_mode {
+                1.0
+            } else {
+                2.0
+            };
 
             let mut left_border = 0.0;
             let mut right_border = 0.0;
 
-            let opened_files = state.iter().filter(|(_, cache)| {
-                cache.opened
-            }).collect::<Vec<_>>();
+            let opened_files = state
+                .iter()
+                .filter(|(_, cache)| cache.opened)
+                .collect::<Vec<_>>();
 
             #[cfg(not(target_arch = "wasm32"))]
             let height = {
                 let mut y = 0.0;
-                ctx.input(|i| {y = i.viewport().inner_rect.unwrap().size().y});
+                ctx.input(|i| y = i.viewport().inner_rect.unwrap().size().y);
                 y
             };
             #[cfg(target_arch = "wasm32")]
@@ -606,22 +644,35 @@ impl eframe::App for DataViewerApp {
 
             match self.plot_mode {
                 PlotMode::Histogram => {
-                    let plot = Plot::new("Histogram Plot").legend(Legend::default())
-                    .height(height - 35.0);
+                    let plot = Plot::new("Histogram Plot")
+                        .legend(Legend::default())
+                        .height(height - 35.0);
 
                     plot.show(ui, |plot_ui| {
-
                         let bounds = plot_ui.plot_bounds();
                         left_border = bounds.min()[0] as f32;
                         right_border = bounds.max()[0] as f32;
 
                         if opened_files.len() == 1 {
-                            if let (_, PointState {opened: true, histogram: Some(hist), .. }) = opened_files[0] {
+                            if let (
+                                _,
+                                PointState {
+                                    opened: true,
+                                    histogram: Some(hist),
+                                    ..
+                                },
+                            ) = opened_files[0]
+                            {
                                 hist.draw_egui_each_channel(plot_ui, Some(thickness));
                             }
                         } else {
                             opened_files.iter().for_each(|(name, cache)| {
-                                if let PointState {opened: true, histogram: Some(hist), .. } = cache {
+                                if let PointState {
+                                    opened: true,
+                                    histogram: Some(hist),
+                                    ..
+                                } = cache
+                                {
                                     hist.draw_egui(plot_ui, Some(name), Some(thickness), None);
                                 }
                             })
@@ -629,34 +680,58 @@ impl eframe::App for DataViewerApp {
                     });
                 }
                 PlotMode::PPT => {
-                    let plot = Plot::new("Point/Time").legend(Legend::default())
-                    .x_axis_formatter(|mark, _, _| chrono::NaiveDateTime::from_timestamp_millis(mark.value as i64).unwrap().to_string())
-                    .height(height - 35.0);
+                    let plot = Plot::new("Point/Time")
+                        .legend(Legend::default())
+                        .x_axis_formatter(|mark, _, _| {
+                            chrono::NaiveDateTime::from_timestamp_millis(mark.value as i64)
+                                .unwrap()
+                                .to_string()
+                        })
+                        .height(height - 35.0);
 
                     plot.show(ui, |plot_ui| {
-                        let points = opened_files.iter().filter_map(|(_, cache)| {
-                            if let PointState { start_time: Some(start_time), counts: Some(counts), .. } = cache {
-                                Some([start_time.timestamp_millis() as f64, *counts as f64])
-                            } else {
-                                None
-                            }
-                        }).collect::<Vec<_>>();
+                        let points = opened_files
+                            .iter()
+                            .filter_map(|(_, cache)| {
+                                if let PointState {
+                                    start_time: Some(start_time),
+                                    counts: Some(counts),
+                                    acquisition_time: Some(acquisition_time),
+                                    ..
+                                } = cache
+                                {
+                                    Some([start_time.timestamp_millis() as f64, *counts as f64 / (*acquisition_time as f64)])
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
 
                         plot_ui.points(Points::new(points).radius(3.0));
                     });
                 }
                 PlotMode::PPV => {
-                    let plot = Plot::new("Point/Voltage").legend(Legend::default())
-                    .height(height - 35.0);
+                    let plot = Plot::new("Point/Voltage")
+                        .legend(Legend::default())
+                        .height(height - 35.0);
 
                     plot.show(ui, |plot_ui| {
-                        let points = opened_files.iter().filter_map(|(_, cache)| {
-                            if let PointState { voltage: Some(voltage), counts: Some(counts), .. } = cache {
-                                Some([*voltage as f64, *counts as f64])
-                            } else {
-                                None
-                            }
-                        }).collect::<Vec<_>>();
+                        let points = opened_files
+                            .iter()
+                            .filter_map(|(_, cache)| {
+                                if let PointState {
+                                    voltage: Some(voltage),
+                                    counts: Some(counts),
+                                    acquisition_time: Some(acquisition_time),
+                                    ..
+                                } = cache
+                                {
+                                    Some([*voltage as f64, *counts as f64 / (*acquisition_time as f64)])
+                                } else {
+                                    None
+                                }
+                            })
+                            .collect::<Vec<_>>();
 
                         plot_ui.points(Points::new(points).radius(3.0));
                     });
@@ -664,46 +739,60 @@ impl eframe::App for DataViewerApp {
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
-
                 #[cfg(not(target_arch = "wasm32"))]
                 let filtered_viewer_in_path = which("filtered-viewer").is_ok();
                 #[cfg(target_arch = "wasm32")]
                 let filtered_viewer_in_path = true;
 
-                let filtered_viewer_button = ui.add_enabled(
-                    opened_files.len() == 1 && filtered_viewer_in_path,
-                    egui::Button::new("waveforms (in window)")).on_disabled_hover_ui(|ui| {
-                    if !filtered_viewer_in_path {
-                        ui.colored_label(Color32::RED, "filtered-viewer must be in PATH");
-                    }
-                    if opened_files.len() != 1 {
-                        ui.colored_label(Color32::RED, "exact one file must be opened");
-                    }
-                });
+                let filtered_viewer_button = ui
+                    .add_enabled(
+                        opened_files.len() == 1 && filtered_viewer_in_path,
+                        egui::Button::new("waveforms (in window)"),
+                    )
+                    .on_disabled_hover_ui(|ui| {
+                        if !filtered_viewer_in_path {
+                            ui.colored_label(Color32::RED, "filtered-viewer must be in PATH");
+                        }
+                        if opened_files.len() != 1 {
+                            ui.colored_label(Color32::RED, "exact one file must be opened");
+                        }
+                    });
 
                 let process = self.processing_params.lock().process.clone();
                 let postprocess = self.processing_params.lock().post_process;
 
                 if filtered_viewer_button.clicked() {
                     let (filepath, _) = opened_files[0];
-                    #[cfg(not(target_arch = "wasm32"))] {
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
                         let mut command = tokio::process::Command::new("filtered-viewer");
-                        
-                        command.arg(filepath)
-                        .arg("--min").arg(left_border.max(0.0).to_string())
-                        .arg("--max").arg(right_border.max(0.0).to_string())
-                        .arg("--process").arg(serde_json::to_string(&process).unwrap())
-                        .arg("--postprocess").arg(serde_json::to_string(&postprocess).unwrap());
-                        
+
+                        command
+                            .arg(filepath)
+                            .arg("--min")
+                            .arg(left_border.max(0.0).to_string())
+                            .arg("--max")
+                            .arg(right_border.max(0.0).to_string())
+                            .arg("--process")
+                            .arg(serde_json::to_string(&process).unwrap())
+                            .arg("--postprocess")
+                            .arg(serde_json::to_string(&postprocess).unwrap());
+
                         command.spawn().unwrap();
                     }
-                    #[cfg(target_arch = "wasm32")] {
+                    #[cfg(target_arch = "wasm32")]
+                    {
                         let search = serde_qs::to_string(&ViewerMode::FilteredEvents {
                             filepath: PathBuf::from(filepath),
                             process,
                             postprocess,
-                            range: left_border.max(0.0)..right_border.max(0.0)}).unwrap();
-                        window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
+                            range: left_border.max(0.0)..right_border.max(0.0),
+                        })
+                        .unwrap();
+                        window()
+                            .unwrap()
+                            .open_with_url(&format!("/?{search}"))
+                            .unwrap();
                     }
                 }
 
@@ -712,49 +801,75 @@ impl eframe::App for DataViewerApp {
                 #[cfg(target_arch = "wasm32")]
                 let point_viewer_in_path = true;
 
-                let point_viewer_button = ui.add_enabled(opened_files.len() == 1 && point_viewer_in_path,
-                egui::Button::new("waveforms (all)")).on_disabled_hover_ui(|ui| {
-                    if !point_viewer_in_path {
-                        ui.colored_label(Color32::RED, "point-viewer must be in PATH");
-                    }
-                    if opened_files.len() != 1 {
-                        ui.colored_label(Color32::RED, "exact one file must be opened");
-                    }
-                });
+                let point_viewer_button = ui
+                    .add_enabled(
+                        opened_files.len() == 1 && point_viewer_in_path,
+                        egui::Button::new("waveforms (all)"),
+                    )
+                    .on_disabled_hover_ui(|ui| {
+                        if !point_viewer_in_path {
+                            ui.colored_label(Color32::RED, "point-viewer must be in PATH");
+                        }
+                        if opened_files.len() != 1 {
+                            ui.colored_label(Color32::RED, "exact one file must be opened");
+                        }
+                    });
 
                 if point_viewer_button.clicked() {
                     let (filepath, _) = opened_files[0];
-                    #[cfg(not(target_arch = "wasm32"))] {
-                        tokio::process::Command::new("point-viewer").arg(filepath).spawn().unwrap();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        tokio::process::Command::new("point-viewer")
+                            .arg(filepath)
+                            .spawn()
+                            .unwrap();
                     }
-                    #[cfg(target_arch = "wasm32")] {
+                    #[cfg(target_arch = "wasm32")]
+                    {
                         let search = serde_qs::to_string(&ViewerMode::Waveforms {
-                            filepath: PathBuf::from(filepath)
-                        }).unwrap();
-                        window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
+                            filepath: PathBuf::from(filepath),
+                        })
+                        .unwrap();
+                        window()
+                            .unwrap()
+                            .open_with_url(&format!("/?{search}"))
+                            .unwrap();
                     }
                 }
-                
-                let bundle_viewer_button = ui.add_enabled(opened_files.len() == 1 && point_viewer_in_path,
-                egui::Button::new("bundles")).on_disabled_hover_ui(|ui| {
-                    if !point_viewer_in_path {
-                        ui.colored_label(Color32::RED, "bundle-viewer must be in PATH");
-                    }
-                    if opened_files.len() != 1 {
-                        ui.colored_label(Color32::RED, "exact one file must be opened");
-                    }
-                });
+
+                let bundle_viewer_button = ui
+                    .add_enabled(
+                        opened_files.len() == 1 && point_viewer_in_path,
+                        egui::Button::new("bundles"),
+                    )
+                    .on_disabled_hover_ui(|ui| {
+                        if !point_viewer_in_path {
+                            ui.colored_label(Color32::RED, "bundle-viewer must be in PATH");
+                        }
+                        if opened_files.len() != 1 {
+                            ui.colored_label(Color32::RED, "exact one file must be opened");
+                        }
+                    });
 
                 if bundle_viewer_button.clicked() {
                     let (filepath, _) = opened_files[0];
-                    #[cfg(not(target_arch = "wasm32"))] {
-                        tokio::process::Command::new("bundle-viewer").arg(filepath).spawn().unwrap();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        tokio::process::Command::new("bundle-viewer")
+                            .arg(filepath)
+                            .spawn()
+                            .unwrap();
                     }
-                    #[cfg(target_arch = "wasm32")] {
+                    #[cfg(target_arch = "wasm32")]
+                    {
                         let search = serde_qs::to_string(&ViewerMode::Bundles {
-                            filepath: PathBuf::from(filepath)
-                        }).unwrap();
-                        window().unwrap().open_with_url(&format!("/?{search}")).unwrap();
+                            filepath: PathBuf::from(filepath),
+                        })
+                        .unwrap();
+                        window()
+                            .unwrap()
+                            .open_with_url(&format!("/?{search}"))
+                            .unwrap();
                     }
                 }
 

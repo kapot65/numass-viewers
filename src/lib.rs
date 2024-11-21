@@ -74,10 +74,19 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
                 None
             };
 
+            let acquisition_time = if let NumassMeta::Reply(Reply::AcquirePoint {
+                acquisition_time, .. 
+            }) = &meta {
+                Some(acquisition_time.to_owned())
+            } else {
+                None
+            };
+
             PointState {
                 opened: true,
                 histogram: Some(histogram),
                 start_time,
+                acquisition_time,
                 voltage,
                 modified,
                 counts
@@ -87,6 +96,7 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
                 opened: false,
                 histogram: None,
                 start_time: None,
+                acquisition_time: None,
                 voltage: None,
                 modified: None,
                 counts: None
