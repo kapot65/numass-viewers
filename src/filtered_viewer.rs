@@ -44,7 +44,7 @@ impl<'a> FilteredViewer<'a> {
         let (waveforms, static_params) = {
             let point = load_point(&filepath).await;
             let point = Box::leak::<'a>(Box::new(point)); // TODO: set lifetime properly
-            let static_params = StaticProcessParams::from_point(point);
+            let static_params = StaticProcessParams::from_point(point, &process.algorithm);
             (extract_waveforms(point), static_params)
         };
 
