@@ -6,7 +6,7 @@ use eframe::{
     egui::{self, mutex::Mutex, Ui},
     epaint::Color32,
 };
-use egui_plot::{Legend, Plot, Points};
+use egui_plot::{HLine, Legend, Plot, PlotPoint, Points, VLine};
 
 use globset::GlobMatcher;
 use processing::{storage::LoadState, viewer::ViewerState, widgets::UserInput};
@@ -70,6 +70,7 @@ pub struct DataViewerApp {
     processing_params: Arc<Mutex<ViewerState>>,
 
     state: Arc<Mutex<BTreeMap<String, PointState>>>,
+    current_path: Option<String>,
 
     #[cfg(target_arch = "wasm32")]
     processor_pool: Vec<OneshotBridge<PointProcessor>>,
@@ -92,6 +93,7 @@ impl DataViewerApp {
             select_single: false,
             glob_pattern: "*/Tritium_1/set_[123]/p*(HV1=14000)".to_owned(),
             state,
+            current_path: None,
             processing_status,
             processing_params: Arc::new(Mutex::new(ViewerState::default())),
             plot_mode: PlotMode::Histogram,
@@ -164,10 +166,7 @@ impl DataViewerApp {
                         state.clear();
 
                         for path in matched {
-                            state
-                                .entry(path)
-                                .or_insert(EMPTY_POINT)
-                                .opened = true;
+                            state.entry(path).or_insert(EMPTY_POINT).opened = true;
                         }
                     });
                 }
@@ -700,7 +699,10 @@ impl eframe::App for DataViewerApp {
                                     ..
                                 } = cache
                                 {
-                                    Some([start_time.timestamp_millis() as f64, *counts as f64 / (*acquisition_time as f64)])
+                                    Some([
+                                        start_time.timestamp_millis() as f64,
+                                        *counts as f64 / (*acquisition_time as f64),
+                                    ])
                                 } else {
                                     None
                                 }
@@ -726,7 +728,10 @@ impl eframe::App for DataViewerApp {
                                     ..
                                 } = cache
                                 {
-                                    Some([*voltage as f64, *counts as f64 / (*acquisition_time as f64)])
+                                    Some([
+                                        *voltage as f64,
+                                        *counts as f64 / (*acquisition_time as f64),
+                                    ])
                                 } else {
                                     None
                                 }
@@ -734,11 +739,80 @@ impl eframe::App for DataViewerApp {
                             .collect::<Vec<_>>();
 
                         plot_ui.points(Points::new(points).radius(3.0));
+
+                        if plot_ui.response().clicked() {
+                            if let Some(pos) = plot_ui.pointer_coordinate() {
+                                let clicked_file = opened_files.iter().find(|(_, cache)| {
+                                    if let PointState {
+                                        voltage: Some(voltage),
+                                        counts: Some(counts),
+                                        acquisition_time: Some(acquisition_time),
+                                        ..
+                                    } = cache
+                                    {
+                                        let point_pos = PlotPoint::new(
+                                            *voltage as f64,
+                                            *counts as f64 / (*acquisition_time as f64),
+                                        );
+                                        let distance = point_pos.to_pos2().distance(pos.to_pos2());
+                                        if distance < 100.0 {
+                                            return true;
+                                        }
+                                        false
+                                    } else {
+                                        false
+                                    }
+                                });
+
+                                if let Some((path, cache)) = clicked_file {
+                                    let path = (**path).clone();
+                                    self.current_path =
+                                        if let Some(p) = self.current_path.to_owned() {
+                                            if p != path {
+                                                println!("Clicked on {:?} ({:?})", path, cache);
+                                                Some(path)
+                                            } else {
+                                                None
+                                            }
+                                        } else {
+                                            Some(path)
+                                        };
+                                } else {
+                                    self.current_path = None;
+                                }
+                            }
+                        }
+
+                        if let Some(current) = &self.current_path {
+                            if let PointState {
+                                voltage: Some(voltage),
+                                counts: Some(counts),
+                                acquisition_time: Some(acquisition_time),
+                                ..
+                            } = state[current]
+                            {
+                                plot_ui.hline(
+                                    HLine::new(counts as f64 / (acquisition_time as f64))
+                                        .color(Color32::WHITE),
+                                );
+                                plot_ui.vline(VLine::new(voltage as f64).color(Color32::WHITE));
+                                // plot_ui.line(Line::new(vec![
+                                //     [voltage as f64, counts as f64 / (acquisition_time as f64)],]).color(Color32::WHITE));
+                            }
+                        }
                     });
                 }
             }
 
             ui.with_layout(egui::Layout::right_to_left(egui::Align::TOP), |ui| {
+                let marked_point = if let Some(path) = &self.current_path {
+                    Some(path)
+                } else if opened_files.len() == 1 {
+                    Some(opened_files[0].0)
+                } else {
+                    None
+                };
+
                 #[cfg(not(target_arch = "wasm32"))]
                 let filtered_viewer_in_path = which("filtered-viewer").is_ok();
                 #[cfg(target_arch = "wasm32")]
@@ -746,15 +820,15 @@ impl eframe::App for DataViewerApp {
 
                 let filtered_viewer_button = ui
                     .add_enabled(
-                        opened_files.len() == 1 && filtered_viewer_in_path,
+                        marked_point.is_some() && filtered_viewer_in_path,
                         egui::Button::new("waveforms (in window)"),
                     )
                     .on_disabled_hover_ui(|ui| {
                         if !filtered_viewer_in_path {
                             ui.colored_label(Color32::RED, "filtered-viewer must be in PATH");
                         }
-                        if opened_files.len() != 1 {
-                            ui.colored_label(Color32::RED, "exact one file must be opened");
+                        if marked_point.is_some() {
+                            ui.colored_label(Color32::RED, "exact one file must be opened/marked");
                         }
                     });
 
@@ -762,21 +836,26 @@ impl eframe::App for DataViewerApp {
                 let postprocess = self.processing_params.lock().post_process;
 
                 if filtered_viewer_button.clicked() {
-                    let (filepath, _) = opened_files[0];
+                    let filepath = marked_point.unwrap();
+
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         let mut command = tokio::process::Command::new("filtered-viewer");
 
                         command
                             .arg(filepath)
-                            .arg("--min")
-                            .arg(left_border.max(0.0).to_string())
-                            .arg("--max")
-                            .arg(right_border.max(0.0).to_string())
                             .arg("--process")
                             .arg(serde_json::to_string(&process).unwrap())
                             .arg("--postprocess")
                             .arg(serde_json::to_string(&postprocess).unwrap());
+
+                        if self.plot_mode == PlotMode::Histogram {
+                            command
+                                .arg("--min")
+                                .arg(left_border.max(0.0).to_string())
+                                .arg("--max")
+                                .arg(right_border.max(0.0).to_string());
+                        };
 
                         command.spawn().unwrap();
                     }
@@ -786,7 +865,7 @@ impl eframe::App for DataViewerApp {
                             filepath: PathBuf::from(filepath),
                             process,
                             postprocess,
-                            range: left_border.max(0.0)..right_border.max(0.0),
+                            range: left_border.max(0.0)..right_border.max(0.0), // TODO: fix
                         })
                         .unwrap();
                         window()
@@ -803,20 +882,20 @@ impl eframe::App for DataViewerApp {
 
                 let point_viewer_button = ui
                     .add_enabled(
-                        opened_files.len() == 1 && point_viewer_in_path,
+                        marked_point.is_some() && point_viewer_in_path,
                         egui::Button::new("waveforms (all)"),
                     )
                     .on_disabled_hover_ui(|ui| {
                         if !point_viewer_in_path {
                             ui.colored_label(Color32::RED, "point-viewer must be in PATH");
                         }
-                        if opened_files.len() != 1 {
-                            ui.colored_label(Color32::RED, "exact one file must be opened");
+                        if marked_point.is_some() {
+                            ui.colored_label(Color32::RED, "exact one file must be opened/marked");
                         }
                     });
 
                 if point_viewer_button.clicked() {
-                    let (filepath, _) = opened_files[0];
+                    let filepath = marked_point.unwrap();
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         tokio::process::Command::new("point-viewer")
@@ -837,22 +916,61 @@ impl eframe::App for DataViewerApp {
                     }
                 }
 
+                #[cfg(not(target_arch = "wasm32"))]
+                let trigger_viewer_in_path = which("trigger-viewer").is_ok();
+                #[cfg(target_arch = "wasm32")]
+                let trigger_viewer_in_path = true;
+
+                let trigger_viewer_button = ui
+                    .add_enabled(
+                        marked_point.is_some() && trigger_viewer_in_path,
+                        egui::Button::new("triggers"),
+                    )
+                    .on_disabled_hover_ui(|ui| {
+                        if !trigger_viewer_in_path {
+                            ui.colored_label(Color32::RED, "trigger-viewer must be in PATH");
+                        }
+                        if marked_point.is_some() {
+                            ui.colored_label(Color32::RED, "exact one file must be opened/marked");
+                        }
+                    });
+
+                if trigger_viewer_button.clicked() {
+                    let filepath = marked_point.unwrap();
+                    #[cfg(not(target_arch = "wasm32"))]
+                    {
+                        tokio::process::Command::new("trigger-viewer")
+                            .arg(filepath)
+                            .spawn()
+                            .unwrap();
+                    }
+                    #[cfg(target_arch = "wasm32")]
+                    {
+                        todo!("implement trigger viewer for wasm")
+                    }
+                }
+
+                #[cfg(not(target_arch = "wasm32"))]
+                let bundle_viewer_in_path = which("bundle-viewer").is_ok();
+                #[cfg(target_arch = "wasm32")]
+                let bundle_viewer_in_path = true;
+
                 let bundle_viewer_button = ui
                     .add_enabled(
-                        opened_files.len() == 1 && point_viewer_in_path,
+                        marked_point.is_some() && bundle_viewer_in_path,
                         egui::Button::new("bundles"),
                     )
                     .on_disabled_hover_ui(|ui| {
-                        if !point_viewer_in_path {
+                        if !bundle_viewer_in_path {
                             ui.colored_label(Color32::RED, "bundle-viewer must be in PATH");
                         }
-                        if opened_files.len() != 1 {
-                            ui.colored_label(Color32::RED, "exact one file must be opened");
+                        if marked_point.is_some() {
+                            ui.colored_label(Color32::RED, "exact one file must be opened/marked");
                         }
                     });
 
                 if bundle_viewer_button.clicked() {
-                    let (filepath, _) = opened_files[0];
+                    let filepath = marked_point.unwrap();
                     #[cfg(not(target_arch = "wasm32"))]
                     {
                         tokio::process::Command::new("bundle-viewer")
