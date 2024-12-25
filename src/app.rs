@@ -742,7 +742,7 @@ impl eframe::App for DataViewerApp {
 
                         if plot_ui.response().clicked() {
                             if let Some(pos) = plot_ui.pointer_coordinate() {
-                                let clicked_file = opened_files.iter().find(|(_, cache)| {
+                                let clicked_file = opened_files.iter().filter_map(|(path, cache)| {
                                     if let PointState {
                                         voltage: Some(voltage),
                                         counts: Some(counts),
@@ -756,20 +756,19 @@ impl eframe::App for DataViewerApp {
                                         );
                                         let distance = point_pos.to_pos2().distance(pos.to_pos2());
                                         if distance < 100.0 {
-                                            return true;
+                                            return Some((path, distance));
                                         }
-                                        false
+                                        None
                                     } else {
-                                        false
+                                        None
                                     }
-                                });
+                                }).min_by_key(|(_, distance)| (distance * 1000.0) as i64);
 
-                                if let Some((path, cache)) = clicked_file {
+                                if let Some((path, _)) = clicked_file {
                                     let path = (**path).clone();
                                     self.current_path =
                                         if let Some(p) = self.current_path.to_owned() {
                                             if p != path {
-                                                println!("Clicked on {:?} ({:?})", path, cache);
                                                 Some(path)
                                             } else {
                                                 None
@@ -946,7 +945,14 @@ impl eframe::App for DataViewerApp {
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        todo!("implement trigger viewer for wasm")
+                        let search = serde_qs::to_string(&ViewerMode::Triggers {
+                            filepath: PathBuf::from(filepath),
+                        })
+                        .unwrap();
+                        window()
+                            .unwrap()
+                            .open_with_url(&format!("/?{search}"))
+                            .unwrap();
                     }
                 }
 

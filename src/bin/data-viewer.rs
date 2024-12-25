@@ -60,7 +60,7 @@ fn main() {
     use egui_extras::install_image_loaders;
     use processing::viewer::ViewerMode;
     use viewers::{
-        filtered_viewer, point_viewer, bundle_viewer
+        bundle_viewer, filtered_viewer, point_viewer, trigger_viewer
     };
     use wasm_bindgen_futures::spawn_local;
 
@@ -85,81 +85,108 @@ fn main() {
     let web_runner = eframe::WebRunner::new();
     let web_options = eframe::WebOptions::default();
 
-    if let Some(ViewerMode::FilteredEvents {
-        filepath,
-        range,
-        process, 
-        postprocess }) = request
-    {
-        set_title(format!("filtered {filepath:?}").as_str());
-        spawn_local(async move {
-            let app = filtered_viewer::FilteredViewer::init_with_point(
-                filepath, 
-                process,
-                postprocess, 
-                range
-            ).await;
+    match request {
+        Some(ViewerMode::FilteredEvents {
+            filepath,
+            range,
+            process, 
+            postprocess }) =>
+        {
+            set_title(format!("filtered {filepath:?}").as_str());
+            spawn_local(async move {
+                let app = filtered_viewer::FilteredViewer::init_with_point(
+                    filepath, 
+                    process,
+                    postprocess, 
+                    range
+                ).await;
+    
+                web_runner.start(
+                    "the_canvas_id", // hardcode it
+                    web_options,
+                    Box::new(move |ctx| {
+                        install_image_loaders(&ctx.egui_ctx);
+                        ctx.egui_ctx.set_visuals(egui::Visuals::dark());
+                        Box::new(app)
+                    }),
+                )
+                .await
+                .expect("failed to start eframe");
+            })
+        }
 
-            web_runner.start(
-                "the_canvas_id", // hardcode it
-                web_options,
-                Box::new(move |ctx| {
-                    install_image_loaders(&ctx.egui_ctx);
-                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                    Box::new(app)
-                }),
-            )
-            .await
-            .expect("failed to start eframe");
-        })
-    } else if let Some(ViewerMode::Waveforms { filepath }) = request {
+        Some(ViewerMode::Waveforms { filepath }) => {
 
-        set_title(filepath.to_str().unwrap());
+            set_title(filepath.to_str().unwrap());
+    
+            spawn_local(async move {
+                web_runner.start(
+                    "the_canvas_id", // hardcode it
+                    web_options,
+                    Box::new(|ctx| {
+                        install_image_loaders(&ctx.egui_ctx);
+                        ctx.egui_ctx.set_visuals(egui::Visuals::dark());
+                        Box::new(point_viewer::PointViewer::init_with_point(filepath))
+                    }),
+                )
+                .await
+                .expect("failed to start eframe");
+            })
+        }
 
-        spawn_local(async move {
-            web_runner.start(
-                "the_canvas_id", // hardcode it
-                web_options,
-                Box::new(|ctx| {
-                    install_image_loaders(&ctx.egui_ctx);
-                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                    Box::new(point_viewer::PointViewer::init_with_point(filepath))
-                }),
-            )
-            .await
-            .expect("failed to start eframe");
-        })
-    } else if let Some(ViewerMode::Bundles { filepath }) = request {
+        Some(ViewerMode::Bundles { filepath }) => {
 
-        set_title(filepath.to_str().unwrap());
+            set_title(filepath.to_str().unwrap());
+    
+            spawn_local(async move {
+                web_runner.start(
+                    "the_canvas_id", // hardcode it
+                    web_options,
+                    Box::new(|ctx| {
+                        install_image_loaders(&ctx.egui_ctx);
+                        ctx.egui_ctx.set_visuals(egui::Visuals::dark());
+                        Box::new(bundle_viewer::BundleViewer::init_with_point(filepath))
+                    }),
+                )
+                .await
+                .expect("failed to start eframe");
+            })
+        }
 
-        spawn_local(async move {
-            web_runner.start(
-                "the_canvas_id", // hardcode it
-                web_options,
-                Box::new(|ctx| {
-                    install_image_loaders(&ctx.egui_ctx);
-                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                    Box::new(bundle_viewer::BundleViewer::init_with_point(filepath))
-                }),
-            )
-            .await
-            .expect("failed to start eframe");
-        })
-    }else {
-        spawn_local(async move {
-            web_runner.start(
-                "the_canvas_id", // hardcode it
-                web_options,
-                Box::new(|ctx| {
-                    install_image_loaders(&ctx.egui_ctx);
-                    ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                    let app = app::DataViewerApp::new();
-                    Box::new(app)
-                }),
-            )
-            .await
-            .expect("failed to start eframe");
-        });
+        Some(ViewerMode::Triggers { filepath }) => {
+
+            set_title(filepath.to_str().unwrap());
+    
+            spawn_local(async move {
+                web_runner.start(
+                    "the_canvas_id", // hardcode it
+                    web_options,
+                    Box::new(|ctx| {
+                        install_image_loaders(&ctx.egui_ctx);
+                        ctx.egui_ctx.set_visuals(egui::Visuals::dark());
+                        Box::new(trigger_viewer::TriggerViewer::init_with_point(filepath))
+                    }),
+                )
+                .await
+                .expect("failed to start eframe");
+            })
+        }
+        
+        None => {
+            spawn_local(async move {
+                web_runner.start(
+                    "the_canvas_id", // hardcode it
+                    web_options,
+                    Box::new(|ctx| {
+                        install_image_loaders(&ctx.egui_ctx);
+                        ctx.egui_ctx.set_visuals(egui::Visuals::dark());
+                        let app = app::DataViewerApp::new();
+                        Box::new(app)
+                    }),
+                )
+                .await
+                .expect("failed to start eframe");
+            });
+        }
     }
 }

@@ -1,8 +1,8 @@
-use std::{collections::BTreeSet, path::PathBuf, sync::Arc};
+use std::{path::PathBuf, sync::Arc};
 
 use egui::mutex::Mutex;
 use egui_plot::{GridMark, Legend};
-use processing::{numass::protos::rsb_event, storage::load_point};
+use processing::{histogram::PointHistogram, numass::protos::rsb_event, storage::load_point};
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
@@ -10,91 +10,105 @@ use tokio::spawn;
 #[cfg(target_arch = "wasm32")]
 use wasm_bindgen_futures::spawn_local as spawn;
 
-type Chunk = BTreeSet<i64>;
-
 pub struct TriggerViewer {
     point: Arc<Mutex<Option<rsb_event::Point>>>,
-    chunks: Arc<Mutex<Option<Vec<Chunk>>>>,
+    trigger_density: Arc<Mutex<Option<PointHistogram>>>,
 
-    limit_ns: u64,
+    /// bin size in ms
+    bin_size: u64, 
+    per_channel: bool
 }
 
 impl TriggerViewer {
     pub fn init_with_point(filepath: PathBuf) -> Self {
         let viewer = TriggerViewer {
             point: Arc::new(Mutex::new(None)),
-            chunks: Arc::new(Mutex::new(None)),
-            limit_ns: 10_000_000,
+            trigger_density: Arc::new(Mutex::new(None)),
+            bin_size: 10,
+            per_channel: false
         };
 
         let point = Arc::clone(&viewer.point);
-        let chunks = Arc::clone(&viewer.chunks);
-        let limit_ns = viewer.limit_ns;
+        let trigger_density = Arc::clone(&viewer.trigger_density);
+        let limit_ms = viewer.bin_size;
 
         spawn(async move {
             let point_local = load_point(&filepath).await;
-
-            let chunks_local = TriggerViewer::point_to_chunks(&point_local, limit_ns);
-
             *point.lock() = Some(point_local);
-            *chunks.lock() = Some(chunks_local);
+
+            TriggerViewer::calc_density(point, trigger_density, limit_ms).await   
         });
 
         viewer
     }
 
-    fn point_to_chunks(point: &rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
-        let mut chunks = vec![];
-        chunks.push(BTreeSet::new());
-
-        for channel in &point.channels {
-            for block in &channel.blocks {
-                for frame in &block.frames {
-                    let chunk_num = (frame.time / limit_ns) as usize;
-
-                    while chunks.len() < chunk_num + 1 {
-                        chunks.push(BTreeSet::new())
+    async fn calc_density(point: Arc<Mutex<Option<rsb_event::Point>>>, trigger_density: Arc<Mutex<Option<PointHistogram>>>, limit_ms: u64) {
+        
+        if let Some(point) = point.lock().as_ref() {
+        
+            let end_time = {
+                let mut end_time = 0;
+                for channel in &point.channels {
+                    for block in &channel.blocks {
+                        for frame in &block.frames {
+                            if end_time < frame.time {
+                                end_time = frame.time;
+                            }
+                        }
                     }
+                }
+                end_time
+            };
 
-                    chunks[chunk_num].insert(
-                        (frame.time % limit_ns) as i64, // channel.id as u8,
-                                                        // (frame.time % limit_ns) as i64,
-                                                        // waveform,
-                    );
+            let mut trigger_density_local = PointHistogram::new_step(0.0..(end_time as f32), (limit_ms as f32) * 1e6);
+
+            for channel in &point.channels {
+                for block in &channel.blocks {
+                    for frame in &block.frames {
+                        trigger_density_local.add(channel.id as u8, frame.time as f32);
+                    }
                 }
             }
+
+            *trigger_density.lock() = Some(trigger_density_local);
         }
 
-        chunks
     }
 }
 
 impl eframe::App for TriggerViewer {
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        if let Some(chunks) = self.chunks.lock().as_ref() {
+
+        egui::SidePanel::left("left").show(ctx, |ui| {
+            ui.add(egui::Slider::new(&mut self.bin_size, 1..=1_000).text("bin size (ms)"));
+            ui.checkbox(&mut self.per_channel, "show each channel");
+            if ui.button("apply").clicked() {
+
+                *self.trigger_density.lock() = None;
+
+                let point = Arc::clone(&self.point);
+                let trigger_density = Arc::clone(&self.trigger_density);
+                let limit_ms = self.bin_size;
+                spawn(async move {
+                    TriggerViewer::calc_density(point, trigger_density, limit_ms).await;
+                });
+            }
+        });
+
+        if let Some(trigger_density) = self.trigger_density.lock().as_ref() {
             egui::CentralPanel::default().show(ctx, |ui| {
-                egui_plot::Plot::new("waveforms")
+                egui_plot::Plot::new("triggers")
                     .legend(Legend::default())
                     .x_axis_formatter(|GridMark { value, .. }, _, _| {
-                        format!("{:.3} μs", value * 1e-3)
+                        format!("{:.3} s", value * 1e-9)
                     })
                     .show(ui, |plot_ui| {
-                        let cr = chunks
-                            .iter()
-                            .enumerate()
-                            .flat_map(|(idx, chunk)| {
-                                vec![
-                                    [(idx as u64 * self.limit_ns) as f64, chunk.len() as f64],
-                                    [
-                                        ((idx + 1) as u64 * self.limit_ns) as f64,
-                                        chunk.len() as f64,
-                                    ],
-                                ]
-                            })
-                            .collect::<Vec<_>>();
-
-                        plot_ui.line(egui_plot::Line::new(cr));
+                        if self.per_channel {
+                            trigger_density.draw_egui_each_channel(plot_ui, None);
+                        } else {
+                            trigger_density.draw_egui(plot_ui, None, None, None)
+                        }
                     });
             });
         } else {
