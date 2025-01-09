@@ -862,8 +862,8 @@ impl eframe::App for DataViewerApp {
                     {
                         let search = serde_qs::to_string(&ViewerMode::FilteredEvents {
                             filepath: PathBuf::from(filepath),
-                            process,
-                            postprocess,
+                            process: process.clone(),
+                            postprocess: postprocess.clone(),
                             range: left_border.max(0.0)..right_border.max(0.0), // TODO: fix
                         })
                         .unwrap();
@@ -981,6 +981,10 @@ impl eframe::App for DataViewerApp {
                     {
                         tokio::process::Command::new("bundle-viewer")
                             .arg(filepath)
+                            .arg("--process")
+                            .arg(serde_json::to_string(&process).unwrap())
+                            .arg("--postprocess")
+                            .arg(serde_json::to_string(&postprocess).unwrap())
                             .spawn()
                             .unwrap();
                     }
@@ -988,6 +992,8 @@ impl eframe::App for DataViewerApp {
                     {
                         let search = serde_qs::to_string(&ViewerMode::Bundles {
                             filepath: PathBuf::from(filepath),
+                            process,
+                            postprocess
                         })
                         .unwrap();
                         window()

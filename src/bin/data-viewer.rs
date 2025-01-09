@@ -134,9 +134,11 @@ fn main() {
             })
         }
 
-        Some(ViewerMode::Bundles { filepath }) => {
+        Some(ViewerMode::Bundles { filepath, process, postprocess  }) => {
 
             set_title(filepath.to_str().unwrap());
+
+            let app = bundle_viewer::BundleViewer::init_with_point(filepath, process, postprocess);
     
             spawn_local(async move {
                 web_runner.start(
@@ -145,7 +147,7 @@ fn main() {
                     Box::new(|ctx| {
                         install_image_loaders(&ctx.egui_ctx);
                         ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                        Box::new(bundle_viewer::BundleViewer::init_with_point(filepath))
+                        Box::new(app)
                     }),
                 )
                 .await
@@ -158,6 +160,7 @@ fn main() {
             set_title(filepath.to_str().unwrap());
     
             spawn_local(async move {
+                
                 web_runner.start(
                     "the_canvas_id", // hardcode it
                     web_options,
@@ -174,6 +177,7 @@ fn main() {
         
         None => {
             spawn_local(async move {
+                
                 web_runner.start(
                     "the_canvas_id", // hardcode it
                     web_options,
