@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use app::ProcessingStatus;
 use egui::mutex::Mutex;
-use processing::{numass::{NumassMeta, Reply, ExternalMeta}, utils::events_to_histogram};
+use processing::{numass::{ExternalMeta, NumassMeta, Reply}, preprocess::PreprocessParams, utils::events_to_histogram, viewer::EMPTY_POINT};
 
 use processing::{
     histogram::HistogramParams, 
@@ -51,6 +51,11 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
     events.map(|(meta, events)| {
         if let Some(events) = events {
 
+            let bad_blocks = {
+                let (_, PreprocessParams {  bad_blocks, ..}) = &events;
+                Some(bad_blocks.to_owned())
+            };
+
             let processed = processing::postprocess::post_process(events, &post_process);
 
             let histogram = events_to_histogram(processed, histogram);
@@ -88,20 +93,13 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
                 histogram: Some(histogram),
                 start_time,
                 acquisition_time,
+                bad_blocks,
                 voltage,
                 modified,
                 counts
             }
         } else {
-            PointState {
-                opened: false,
-                histogram: None,
-                start_time: None,
-                acquisition_time: None,
-                voltage: None,
-                modified: None,
-                counts: None
-            }
+            EMPTY_POINT
         }
     })
 }

@@ -21,9 +21,14 @@
  3. Start numass-server in another terminal window (pref --release flag)
     ```shell
     cd ../numass-server/
-    cargo run --release
+    cargo run --release -- /data-fast/numass-server/
     ```
     current [Trunk.toml](Trunk.toml) is configured to use numass-server default port as api proxy so everything should work.
 
 
-    
+## Workarouds
+
+### VSCode doesn't see numass-* packages in WASM workspace
+- delete `git` folder in `~/.cargo` to force cargo to re-fetch
+    > [!NOTE]
+    > Возможно сработает просто `cargo update`

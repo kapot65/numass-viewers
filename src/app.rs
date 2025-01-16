@@ -9,7 +9,7 @@ use eframe::{
 use egui_plot::{HLine, Legend, Plot, PlotPoint, Points, VLine};
 
 use globset::GlobMatcher;
-use processing::{storage::LoadState, viewer::ViewerState, widgets::UserInput};
+use processing::{preprocess::CUTOFF_BIN_SIZE, storage::LoadState, viewer::{ViewerState, EMPTY_POINT}, widgets::UserInput};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -185,9 +185,8 @@ impl DataViewerApp {
                     #[cfg(target_arch = "wasm32")]
                     {
                         let resp = Request::get("/api/root").send().await.unwrap();
-                        root.lock()
-                            .unwrap()
-                            .replace(resp.json::<FSRepr>().await.unwrap());
+                        let root_local = resp.json::<FSRepr>().await.unwrap();
+                        root.lock().unwrap().replace(root_local);
                     }
                 });
             }
@@ -198,8 +197,8 @@ impl DataViewerApp {
                     let root_out = Arc::clone(&self.root);
 
                     spawn(async move {
-                        if let Ok(mut out) = root_out.try_lock() {
-                            root.update_reccurently().await;
+                        root.update_reccurently().await;
+                        if let Ok(mut out) = root_out.lock() {
                             out.replace(root);
                         }
                     });
@@ -228,6 +227,8 @@ impl DataViewerApp {
             if ui.button("save").clicked() {
                 let state = self.state.lock().clone();
                 let plot_mode = self.plot_mode;
+
+                let processing_params = self.processing_params.lock().clone();
 
                 spawn(async move {
                     #[cfg(not(target_arch = "wasm32"))]
@@ -287,7 +288,7 @@ impl DataViewerApp {
 
                                         data.push_str(&format!(
                                             "{point_name:?}\t{start_time:?}\t{}\t{counts}\n",
-                                            start_time.timestamp()
+                                            start_time.and_utc().timestamp()
                                         ));
                                     }
                                 }
@@ -306,22 +307,39 @@ impl DataViewerApp {
                             PlotMode::PPV => {
                                 let mut data = String::new();
                                 {
-                                    data.push_str("path\tvoltage\tcounts\n");
+                                    data.push_str("path\tvoltage\tcount_rate\n");
                                 }
 
                                 for (name, cache) in state_sorted.iter() {
                                     if let PointState {
                                         counts: Some(counts),
                                         voltage: Some(voltage),
+                                        acquisition_time: Some(acquisition_time),
+                                        bad_blocks: Some(bad_blocks),
                                         ..
                                     } = cache
                                     {
+                                        let count_rate =  if processing_params.post_process.cut_bad_blocks {
+
+                                            let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
+                                            let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
+
+                                            *counts as f64 / (
+                                                *acquisition_time - 
+                                                (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
+                                            ) as f64
+                                        } else {
+                                            *counts as f64 / *acquisition_time as f64
+                                        };
+
+
                                         let point_name = {
                                             let temp = PathBuf::from(name);
                                             temp.file_name().unwrap().to_owned()
                                         };
+
                                         data.push_str(&format!(
-                                            "{point_name:?}\t{voltage}\t{counts}\n"
+                                            "{point_name:?}\t{voltage}\t{count_rate}\n"
                                         ));
                                     }
                                 }
@@ -367,8 +385,8 @@ impl DataViewerApp {
                     let mut root = root.clone();
 
                     spawn(async move {
-                        if let Ok(mut out) = root_out.try_lock() {
-                            root.expand_reccurently().await;
+                        root.expand_reccurently().await;
+                        if let Ok(mut out) = root_out.lock() {
                             out.replace(root);
                         }
                     });
@@ -486,16 +504,6 @@ struct FileTreeState {
     pub need_process: bool,
     pub need_load: bool,
 }
-
-const EMPTY_POINT: PointState = PointState {
-    opened: false,
-    histogram: None,
-    voltage: None,
-    start_time: None,
-    acquisition_time: None,
-    counts: None,
-    modified: None,
-};
 
 fn file_tree_entry(
     ui: &mut egui::Ui,
@@ -682,7 +690,7 @@ impl eframe::App for DataViewerApp {
                     let plot = Plot::new("Point/Time")
                         .legend(Legend::default())
                         .x_axis_formatter(|mark, _, _| {
-                            chrono::NaiveDateTime::from_timestamp_millis(mark.value as i64)
+                            chrono::DateTime::from_timestamp_millis(mark.value as i64)
                                 .unwrap()
                                 .to_string()
                         })
@@ -696,13 +704,30 @@ impl eframe::App for DataViewerApp {
                                     start_time: Some(start_time),
                                     counts: Some(counts),
                                     acquisition_time: Some(acquisition_time),
+                                    bad_blocks: Some(bad_blocks),
                                     ..
                                 } = cache
                                 {
-                                    Some([
-                                        start_time.timestamp_millis() as f64,
-                                        *counts as f64 / (*acquisition_time as f64),
-                                    ])
+                                    let processing_params = self.processing_params.lock().clone();
+                                    if processing_params.post_process.cut_bad_blocks {
+
+                                        let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
+                                        let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
+
+                                        Some([
+                                            start_time.and_utc().timestamp_millis() as f64,
+                                            *counts as f64 / (
+                                                *acquisition_time - 
+                                                (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
+                                            ) as f64 ,
+                                        ])
+
+                                    } else {
+                                        Some([
+                                            start_time.and_utc().timestamp_millis() as f64,
+                                            *counts as f64 / *acquisition_time as f64
+                                        ])
+                                    }
                                 } else {
                                     None
                                 }
@@ -725,13 +750,31 @@ impl eframe::App for DataViewerApp {
                                     voltage: Some(voltage),
                                     counts: Some(counts),
                                     acquisition_time: Some(acquisition_time),
+                                    bad_blocks: Some(bad_blocks),
                                     ..
                                 } = cache
                                 {
-                                    Some([
-                                        *voltage as f64,
-                                        *counts as f64 / (*acquisition_time as f64),
-                                    ])
+                                    let processing_params = self.processing_params.lock().clone();
+                                    if processing_params.post_process.cut_bad_blocks {
+
+                                        let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
+                                        let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
+
+                                        Some([
+                                            *voltage as f64,
+                                            *counts as f64 / (
+                                                *acquisition_time - 
+                                                (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
+                                            ) as f64 ,
+                                        ])
+
+                                    } else {
+                                        Some([
+                                            *voltage as f64,
+                                            *counts as f64 / *acquisition_time as f64
+                                        ])
+                                    }
+                                    
                                 } else {
                                     None
                                 }
@@ -747,15 +790,36 @@ impl eframe::App for DataViewerApp {
                                         voltage: Some(voltage),
                                         counts: Some(counts),
                                         acquisition_time: Some(acquisition_time),
+                                        bad_blocks: Some(bad_blocks),
                                         ..
                                     } = cache
                                     {
-                                        let point_pos = PlotPoint::new(
-                                            *voltage as f64,
-                                            *counts as f64 / (*acquisition_time as f64),
-                                        );
+                                        let processing_params = self.processing_params.lock().clone();
+
+                                        // TODO: deduplicate this code
+                                        let point_pos = if processing_params.post_process.cut_bad_blocks {
+
+                                            let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
+                                            let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
+
+                                            PlotPoint::new(
+                                                *voltage as f64,
+                                                *counts as f64 / (
+                                                    *acquisition_time - 
+                                                    (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
+                                                ) as f64
+                                            )
+
+                                        } else {
+                                            PlotPoint::new(
+                                                *voltage as f64,
+                                                *counts as f64 / *acquisition_time as f64
+                                            )
+                                        };
+
+
                                         let distance = point_pos.to_pos2().distance(pos.to_pos2());
-                                        if distance < 100.0 {
+                                        if distance < 1e5 {
                                             return Some((path, distance));
                                         }
                                         None
@@ -863,7 +927,7 @@ impl eframe::App for DataViewerApp {
                         let search = serde_qs::to_string(&ViewerMode::FilteredEvents {
                             filepath: PathBuf::from(filepath),
                             process: process.clone(),
-                            postprocess: postprocess.clone(),
+                            postprocess,
                             range: left_border.max(0.0)..right_border.max(0.0), // TODO: fix
                         })
                         .unwrap();

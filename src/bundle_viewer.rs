@@ -3,7 +3,7 @@ use std::{sync::Arc, path::PathBuf, collections::BTreeMap};
 use egui_plot::{Legend, Points};
 use egui::mutex::Mutex;
 use processing::{
-    numass::protos::rsb_event, postprocess::{post_process, PostProcessParams}, process::{extract_events, ProcessParams}, storage::load_point, types::FrameEvent, utils::color_for_index, widgets::UserInput
+    numass::{protos::rsb_event, NumassMeta}, postprocess::{post_process, PostProcessParams}, process::{extract_events, ProcessParams}, storage::{load_meta, load_point}, types::FrameEvent, utils::color_for_index, widgets::UserInput
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -16,6 +16,7 @@ type Chunk = Vec<(u8, i64, f32)>;
 
 pub struct BundleViewer {
     point: Arc<Mutex<Option<rsb_event::Point>>>, // TODO: redownload point instead of storing?
+    meta: Arc<Mutex<Option<NumassMeta>>>, // TODO: redownload meta instead of storing?
 
     process:ProcessParams,
     post_process: PostProcessParams,
@@ -25,9 +26,9 @@ pub struct BundleViewer {
     current_chunk: usize,
 }
 
-fn point_to_chunks(point: rsb_event::Point, process: ProcessParams, postprocess: PostProcessParams, limit_ns: u64) -> Vec<Chunk> {
+fn point_to_chunks(meta: Option<NumassMeta>, point: rsb_event::Point, process: ProcessParams, postprocess: PostProcessParams, limit_ns: u64) -> Vec<Chunk> {
 
-    let events = post_process(extract_events(point, &process), &postprocess);
+    let events = post_process(extract_events(meta, point, &process), &postprocess);
 
     let mut chunks = vec![];
     chunks.push(vec![]);
@@ -60,6 +61,7 @@ impl BundleViewer {
 
         let viewer = BundleViewer {
             point: Arc::new(Mutex::new(None)),
+            meta: Arc::new(Mutex::new(None)),
             process,
             post_process,
             limit_ms: 100,
@@ -68,6 +70,7 @@ impl BundleViewer {
         };
 
         let point = Arc::clone(&viewer.point);
+        let meta = Arc::clone(&viewer.meta);
         let chunks = Arc::clone(&viewer.chunks);
         let limit_ns = viewer.limit_ms * 1_000_000;
         let process = viewer.process.to_owned();
@@ -77,13 +80,17 @@ impl BundleViewer {
             let point_local = load_point(&filepath).await;
             *point.lock() = Some(point_local);
 
-            BundleViewer::recalculate_chunks(point, chunks, process, post_process, limit_ns);
+            let meta_local = load_meta(&filepath).await;
+            *meta.lock() = meta_local;
+
+            BundleViewer::recalculate_chunks(meta, point, chunks, process, post_process, limit_ns);
         });
 
         viewer
     }
 
     fn recalculate_chunks(
+        meta: Arc<Mutex<Option<NumassMeta>>>,
         point: Arc<Mutex<Option<rsb_event::Point>>>,
         chunks: Arc<Mutex<Option<Vec<Chunk>>>>, 
         process: ProcessParams, 
@@ -93,7 +100,12 @@ impl BundleViewer {
         *chunks.lock() = None;
 
         if let Some(point) = &*point.lock() { 
-            let chunks_local = Some(point_to_chunks(point.clone(), process, post_process, limit_ns));
+            let chunks_local = Some(point_to_chunks(
+                meta.lock().clone(),
+                point.clone(), 
+                process, post_process, 
+                limit_ns
+            ));
             *chunks.lock() = chunks_local;
         }
     }
@@ -129,6 +141,10 @@ impl eframe::App for BundleViewer {
             ui.add(egui::Slider::new(&mut self.limit_ms, 1..=1000).text("bin size (ms)"));
 
             if ui.button("apply").clicked() {
+
+                self.current_chunk = 0; // Reset to the first chunk when applying changes.
+
+                let meta = Arc::clone(&self.meta);
                 let point = Arc::clone(&self.point);
                 let chunks = Arc::clone(&self.chunks);
                 let limit_ns = self.limit_ms * 1_000_000;
@@ -136,7 +152,7 @@ impl eframe::App for BundleViewer {
                 let post_process = self.post_process.to_owned();
 
                 spawn(async move {
-                    BundleViewer::recalculate_chunks(point, chunks, process, post_process, limit_ns);
+                    BundleViewer::recalculate_chunks(meta, point, chunks, process, post_process, limit_ns);
                 });
             }
         });
@@ -190,7 +206,7 @@ impl eframe::App for BundleViewer {
                                     Points::new(points)
                                     .color(color_for_index((ch_num) as usize))
                                     .radius(3.0)
-                                    .name(&format!("ch #{}", ch_num + 1))
+                                    .name(format!("ch #{}", ch_num + 1))
                                 )
                             }
                         });

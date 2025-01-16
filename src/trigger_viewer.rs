@@ -1,8 +1,8 @@
 use std::{path::PathBuf, sync::Arc};
 
-use egui::mutex::Mutex;
-use egui_plot::{GridMark, Legend};
-use processing::{histogram::PointHistogram, numass::protos::rsb_event, storage::load_point};
+use egui::{mutex::Mutex, Color32};
+use egui_plot::{GridMark, Legend, VLine};
+use processing::{histogram::PointHistogram, numass::{protos::rsb_event, NumassMeta, Reply}, preprocess::{PreprocessParams, CUTOFF_BIN_SIZE}, process::TRAPEZOID_DEFAULT, storage::{load_meta, load_point}, utils::correct_frame_time};
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
@@ -11,8 +11,10 @@ use tokio::spawn;
 use wasm_bindgen_futures::spawn_local as spawn;
 
 pub struct TriggerViewer {
+    meta: Arc<Mutex<Option<NumassMeta>>>,
     point: Arc<Mutex<Option<rsb_event::Point>>>,
     trigger_density: Arc<Mutex<Option<PointHistogram>>>,
+    static_params: Arc<Mutex<Option<PreprocessParams>>>, 
 
     /// bin size in ms
     bin_size: u64, 
@@ -22,50 +24,67 @@ pub struct TriggerViewer {
 impl TriggerViewer {
     pub fn init_with_point(filepath: PathBuf) -> Self {
         let viewer = TriggerViewer {
+            meta: Arc::new(Mutex::new(None)),
             point: Arc::new(Mutex::new(None)),
+            static_params: Arc::new(Mutex::new(None)),
+
             trigger_density: Arc::new(Mutex::new(None)),
             bin_size: 10,
             per_channel: false
         };
 
+        let meta = Arc::clone(&viewer.meta);
         let point = Arc::clone(&viewer.point);
         let trigger_density = Arc::clone(&viewer.trigger_density);
+        let static_params = Arc::clone(&viewer.static_params);
         let limit_ms = viewer.bin_size;
 
         spawn(async move {
+
+            let meta_local = load_meta(&filepath).await;
+            meta.lock().clone_from(&meta_local);
+
             let point_local = load_point(&filepath).await;
+
+            // TODO: optimize to prevent double processing of point data
+            let static_params_local = PreprocessParams::from_point(meta_local.clone(), &point_local, &TRAPEZOID_DEFAULT);
+            *static_params.lock() = Some(static_params_local);
+
             *point.lock() = Some(point_local);
 
-            TriggerViewer::calc_density(point, trigger_density, limit_ms).await   
+            if let Some(NumassMeta::Reply(Reply::AcquirePoint {
+                acquisition_time,
+                ..
+            })) = meta_local {
+                TriggerViewer::calc_density(point, trigger_density, limit_ms, (acquisition_time * 1e9) as u64).await;
+            } else {
+                panic!("Unexpected meta data type")
+            }
         });
 
         viewer
     }
 
-    async fn calc_density(point: Arc<Mutex<Option<rsb_event::Point>>>, trigger_density: Arc<Mutex<Option<PointHistogram>>>, limit_ms: u64) {
+    /// Calculates the density of triggers over time.
+    /// 
+    /// # Arguments
+    /// * `bin_size` - A size of each time bin in nanoseconds.
+    /// * `acquisition_time` - Total acquisition time in nanoseconds.
+    /// 
+    async fn calc_density(
+        point: Arc<Mutex<Option<rsb_event::Point>>>, 
+        trigger_density: Arc<Mutex<Option<PointHistogram>>>, 
+        bin_size: u64, 
+        acquisition_time: u64) {
         
         if let Some(point) = point.lock().as_ref() {
         
-            let end_time = {
-                let mut end_time = 0;
-                for channel in &point.channels {
-                    for block in &channel.blocks {
-                        for frame in &block.frames {
-                            if end_time < frame.time {
-                                end_time = frame.time;
-                            }
-                        }
-                    }
-                }
-                end_time
-            };
-
-            let mut trigger_density_local = PointHistogram::new_step(0.0..(end_time as f32), (limit_ms as f32) * 1e6);
+            let mut trigger_density_local = PointHistogram::new_step(0.0..(acquisition_time as f32), (bin_size as f32) * 1e6);
 
             for channel in &point.channels {
                 for block in &channel.blocks {
                     for frame in &block.frames {
-                        trigger_density_local.add(channel.id as u8, frame.time as f32);
+                        trigger_density_local.add(channel.id as u8, correct_frame_time(frame.time) as f32);
                     }
                 }
             }
@@ -90,9 +109,23 @@ impl eframe::App for TriggerViewer {
                 let point = Arc::clone(&self.point);
                 let trigger_density = Arc::clone(&self.trigger_density);
                 let limit_ms = self.bin_size;
+
+                let meta = self.meta.lock().clone();
                 spawn(async move {
-                    TriggerViewer::calc_density(point, trigger_density, limit_ms).await;
+                    if let Some(NumassMeta::Reply(Reply::AcquirePoint {
+                        acquisition_time,
+                        ..
+                    })) = meta {
+                        TriggerViewer::calc_density(point, trigger_density, limit_ms, (acquisition_time * 1e9) as u64).await;
+                    } else {
+                        panic!("Unexpected meta data type")
+                    }
                 });
+            }
+            ui.separator();
+
+            if let Some(NumassMeta::Reply(Reply::AcquirePoint { acquisition_time, .. })) = self.meta.lock().as_ref() {
+                ui.label(format!("acquisition_time: {acquisition_time}"));
             }
         });
 
@@ -109,6 +142,18 @@ impl eframe::App for TriggerViewer {
                         } else {
                             trigger_density.draw_egui(plot_ui, None, None, None)
                         }
+
+                        if let Some(PreprocessParams {
+                            bad_blocks,
+                            ..
+                        }) = &self.static_params.lock().as_ref() {
+
+                            bad_blocks.iter().for_each(|idx| {
+                                plot_ui.vline(VLine::new(CUTOFF_BIN_SIZE as f64 * (*idx as f64)).color(Color32::WHITE).name("BAD"));
+                                plot_ui.vline(VLine::new(CUTOFF_BIN_SIZE as f64 * ((*idx + 1) as f64)).color(Color32::WHITE).name("BAD"));
+                            });
+                        }
+                        
                     });
             });
         } else {

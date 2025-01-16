@@ -3,7 +3,7 @@ use std::{sync::Arc, path::PathBuf};
 use egui::mutex::Mutex;
 use egui_plot::{GridMark, Legend};
 use processing::{
-    numass::protos::rsb_event, storage::load_point, types::{ProcessedWaveform, RawWaveform}, utils::{color_for_index, EguiLine} 
+    numass::protos::rsb_event, storage::load_point, types::{ProcessedWaveform, RawWaveform}, utils::{color_for_index, correct_frame_time, EguiLine} 
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -35,7 +35,7 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
     for channel in point.channels {
         for block in channel.blocks {
             for frame in block.frames {
-                let chunk_num = (frame.time / limit_ns) as usize;
+                let chunk_num = (correct_frame_time(frame.time) / limit_ns) as usize;
                 
                 while chunks.len() < chunk_num + 1 {
                     chunks.push(vec![])
@@ -45,7 +45,7 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
 
                 chunks[chunk_num].push((
                     channel.id as u8,
-                    (frame.time % limit_ns) as i64,
+                    (correct_frame_time(frame.time) % limit_ns) as i64,
                     waveform
                 ));
             }
