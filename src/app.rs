@@ -9,7 +9,7 @@ use eframe::{
 use egui_plot::{HLine, Legend, Plot, PlotPoint, Points, VLine};
 
 use globset::GlobMatcher;
-use processing::{preprocess::CUTOFF_BIN_SIZE, storage::LoadState, viewer::{ViewerState, EMPTY_POINT}, widgets::UserInput};
+use processing::{preprocess::Preprocess, storage::LoadState, viewer::{ViewerState, EMPTY_POINT}, widgets::UserInput};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -198,7 +198,7 @@ impl DataViewerApp {
 
                     spawn(async move {
                         root.update_reccurently().await;
-                        if let Ok(mut out) = root_out.lock() {
+                        if let Ok(mut out) = root_out.try_lock() {
                             out.replace(root);
                         }
                     });
@@ -276,8 +276,11 @@ impl DataViewerApp {
 
                                 for (name, cache) in state_sorted.iter() {
                                     if let PointState {
-                                        start_time: Some(start_time),
                                         counts: Some(counts),
+                                        preprocess: Some(Preprocess {
+                                            start_time,
+                                            ..
+                                        }),
                                         ..
                                     } = cache
                                     {
@@ -313,25 +316,17 @@ impl DataViewerApp {
                                 for (name, cache) in state_sorted.iter() {
                                     if let PointState {
                                         counts: Some(counts),
-                                        voltage: Some(voltage),
-                                        acquisition_time: Some(acquisition_time),
-                                        bad_blocks: Some(bad_blocks),
+                                        preprocess: Some(preprocess),
                                         ..
                                     } = cache
                                     {
                                         let count_rate =  if processing_params.post_process.cut_bad_blocks {
-
-                                            let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
-                                            let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
-
                                             *counts as f64 / (
-                                                *acquisition_time - 
-                                                (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
+                                                preprocess.effective_time() as f32 * 1e-9
                                             ) as f64
                                         } else {
-                                            *counts as f64 / *acquisition_time as f64
+                                            *counts as f64 / preprocess.acquisition_time as f64 * 1e-9
                                         };
-
 
                                         let point_name = {
                                             let temp = PathBuf::from(name);
@@ -339,7 +334,7 @@ impl DataViewerApp {
                                         };
 
                                         data.push_str(&format!(
-                                            "{point_name:?}\t{voltage}\t{count_rate}\n"
+                                            "{point_name:?}\t{}\t{count_rate}\n", preprocess.hv
                                         ));
                                     }
                                 }
@@ -386,7 +381,7 @@ impl DataViewerApp {
 
                     spawn(async move {
                         root.expand_reccurently().await;
-                        if let Ok(mut out) = root_out.lock() {
+                        if let Ok(mut out) = root_out.try_lock() {
                             out.replace(root);
                         }
                     });
@@ -701,31 +696,21 @@ impl eframe::App for DataViewerApp {
                             .iter()
                             .filter_map(|(_, cache)| {
                                 if let PointState {
-                                    start_time: Some(start_time),
                                     counts: Some(counts),
-                                    acquisition_time: Some(acquisition_time),
-                                    bad_blocks: Some(bad_blocks),
+                                    preprocess: Some(preprocess),
                                     ..
                                 } = cache
                                 {
                                     let processing_params = self.processing_params.lock().clone();
                                     if processing_params.post_process.cut_bad_blocks {
-
-                                        let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
-                                        let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
-
                                         Some([
-                                            start_time.and_utc().timestamp_millis() as f64,
-                                            *counts as f64 / (
-                                                *acquisition_time - 
-                                                (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
-                                            ) as f64 ,
+                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
+                                            *counts as f64 / preprocess.effective_time() as f64 * 1e-9,
                                         ])
-
                                     } else {
                                         Some([
-                                            start_time.and_utc().timestamp_millis() as f64,
-                                            *counts as f64 / *acquisition_time as f64
+                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
+                                            *counts as f64 / preprocess.acquisition_time as f64 * 1e-9
                                         ])
                                     }
                                 } else {
@@ -747,31 +732,23 @@ impl eframe::App for DataViewerApp {
                             .iter()
                             .filter_map(|(_, cache)| {
                                 if let PointState {
-                                    voltage: Some(voltage),
                                     counts: Some(counts),
-                                    acquisition_time: Some(acquisition_time),
-                                    bad_blocks: Some(bad_blocks),
+                                    preprocess: Some(preprocess),
                                     ..
                                 } = cache
                                 {
                                     let processing_params = self.processing_params.lock().clone();
                                     if processing_params.post_process.cut_bad_blocks {
 
-                                        let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
-                                        let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
-
                                         Some([
-                                            *voltage as f64,
-                                            *counts as f64 / (
-                                                *acquisition_time - 
-                                                (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
-                                            ) as f64 ,
+                                            preprocess.hv as f64,
+                                            *counts as f64 / (preprocess.effective_time() as f64 * 1e-9)
                                         ])
 
                                     } else {
                                         Some([
-                                            *voltage as f64,
-                                            *counts as f64 / *acquisition_time as f64
+                                            preprocess.hv as f64,
+                                            *counts as f64 / (preprocess.acquisition_time as f64 * 1e-9)
                                         ])
                                     }
                                     
@@ -787,10 +764,8 @@ impl eframe::App for DataViewerApp {
                             if let Some(pos) = plot_ui.pointer_coordinate() {
                                 let clicked_file = opened_files.iter().filter_map(|(path, cache)| {
                                     if let PointState {
-                                        voltage: Some(voltage),
                                         counts: Some(counts),
-                                        acquisition_time: Some(acquisition_time),
-                                        bad_blocks: Some(bad_blocks),
+                                        preprocess: Some(preprocess),
                                         ..
                                     } = cache
                                     {
@@ -799,21 +774,15 @@ impl eframe::App for DataViewerApp {
                                         // TODO: deduplicate this code
                                         let point_pos = if processing_params.post_process.cut_bad_blocks {
 
-                                            let max_block = ((acquisition_time * 1e9) as u64 / CUTOFF_BIN_SIZE) as usize;
-                                            let bad_blocks_count =  bad_blocks.iter().filter(|&block| *block < max_block).count();
-
                                             PlotPoint::new(
-                                                *voltage as f64,
-                                                *counts as f64 / (
-                                                    *acquisition_time - 
-                                                    (bad_blocks_count as u64 * CUTOFF_BIN_SIZE) as f32 * 1e-9
-                                                ) as f64
+                                                preprocess.hv,
+                                                *counts as f64 / preprocess.effective_time() as f64 * 1e-9
                                             )
 
                                         } else {
                                             PlotPoint::new(
-                                                *voltage as f64,
-                                                *counts as f64 / *acquisition_time as f64
+                                                preprocess.hv,
+                                                *counts as f64 / preprocess.acquisition_time as f64 * 1e-9
                                             )
                                         };
 
@@ -848,19 +817,18 @@ impl eframe::App for DataViewerApp {
 
                         if let Some(current) = &self.current_path {
                             if let PointState {
-                                voltage: Some(voltage),
                                 counts: Some(counts),
-                                acquisition_time: Some(acquisition_time),
+                                preprocess: Some(Preprocess {
+                                    acquisition_time, hv, ..
+                                }),
                                 ..
                             } = state[current]
                             {
                                 plot_ui.hline(
-                                    HLine::new(counts as f64 / (acquisition_time as f64))
+                                    HLine::new(counts as f64 / (acquisition_time as f64 * 1e-9))
                                         .color(Color32::WHITE),
                                 );
-                                plot_ui.vline(VLine::new(voltage as f64).color(Color32::WHITE));
-                                // plot_ui.line(Line::new(vec![
-                                //     [voltage as f64, counts as f64 / (acquisition_time as f64)],]).color(Color32::WHITE));
+                                plot_ui.vline(VLine::new(hv).color(Color32::WHITE));
                             }
                         }
                     });

@@ -4,7 +4,7 @@ use egui::Color32;
 use egui_plot::{Legend, MarkerShape, PlotUi, Points, VLine};
 
 use processing::{
-    postprocess::{post_process_frame, PostProcessParams}, preprocess::PreprocessParams, process::{
+    postprocess::{post_process_frame, PostProcessParams}, preprocess::Preprocess, process::{
         convert_to_kev, extract_waveforms, frame_to_events, ProcessParams,
     }, storage::{load_meta, load_point}, types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine}
 };
@@ -25,7 +25,7 @@ pub struct FilteredViewer<'a> {
     postprocess: PostProcessParams,
     range: Range<f32>,
     waveforms: NumassWaveforms<'a>,
-    static_params: PreprocessParams,
+    preprocess: Preprocess,
     indexes: Option<Vec<u64>>,
     current: usize,
 }
@@ -41,7 +41,7 @@ impl<'a> FilteredViewer<'a> {
             let meta = load_meta(&filepath).await;
             let point = load_point(&filepath).await;
             let point = Box::leak::<'a>(Box::new(point)); // TODO: set lifetime properly
-            let static_params = PreprocessParams::from_point(meta, point, &process.algorithm);
+            let static_params = Preprocess::from_point(meta, point, &process.algorithm);
             (extract_waveforms(point), static_params)
         };
 
@@ -51,7 +51,7 @@ impl<'a> FilteredViewer<'a> {
             range,
             waveforms,
             indexes: None,
-            static_params,
+            preprocess: static_params,
             current: 0,
         };
 
@@ -69,7 +69,7 @@ impl<'a> FilteredViewer<'a> {
                 frame_to_events(
                     frame,
                     &self.process.algorithm,
-                    &self.static_params,
+                    Some(&self.preprocess),
                     &mut None,
                 ),
                 &self.postprocess,
@@ -103,7 +103,7 @@ impl<'a> FilteredViewer<'a> {
         postprocess: &PostProcessParams,
         plot_ui: &mut PlotUi,
         indexes: &[u64],
-        static_params: &PreprocessParams,
+        preprocess: &Preprocess,
         waveforms: &BTreeMap<u64, NumassFrame<'a>>,
     ) {
         let frame = {
@@ -114,7 +114,7 @@ impl<'a> FilteredViewer<'a> {
         let mut events = frame_to_events(
             &frame,
             &process.algorithm,
-            static_params,
+            Some(preprocess),
             &mut Some(plot_ui),
         );
 
@@ -305,7 +305,7 @@ impl eframe::App for FilteredViewer<'_> {
                             &self.postprocess,
                             plot_ui,
                             indexes,
-                            &self.static_params,
+                            &self.preprocess,
                             &self.waveforms,
                         );
                     });

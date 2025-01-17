@@ -28,7 +28,7 @@ pub struct BundleViewer {
 
 fn point_to_chunks(meta: Option<NumassMeta>, point: rsb_event::Point, process: ProcessParams, postprocess: PostProcessParams, limit_ns: u64) -> Vec<Chunk> {
 
-    let events = post_process(extract_events(meta, point, &process), &postprocess);
+    let (events, _) = post_process(extract_events(meta, point, &process), &postprocess);
 
     let mut chunks = vec![];
     chunks.push(vec![]);

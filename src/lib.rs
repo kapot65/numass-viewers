@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use app::ProcessingStatus;
 use egui::mutex::Mutex;
-use processing::{numass::{ExternalMeta, NumassMeta, Reply}, preprocess::PreprocessParams, utils::events_to_histogram, viewer::EMPTY_POINT};
+use processing::{utils::events_to_histogram, viewer::EMPTY_POINT};
 
 use processing::{
     histogram::HistogramParams, 
@@ -48,53 +48,19 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
 
     let events = processing::storage::process_point(&filepath, &process).await;
 
-    events.map(|(meta, events)| {
-        if let Some(events) = events {
+    events.map(|(_, events)| {
+        if let Some((events, preprocess)) = events {
 
-            let bad_blocks = {
-                let (_, PreprocessParams {  bad_blocks, ..}) = &events;
-                Some(bad_blocks.to_owned())
-            };
+            let (events, preprocess) = processing::postprocess::post_process((events, preprocess), &post_process);
 
-            let processed = processing::postprocess::post_process(events, &post_process);
-
-            let histogram = events_to_histogram(processed, histogram);
+            let histogram = events_to_histogram(events, histogram);
 
             let counts = Some(histogram.events_all(None));
-
-            // extract voltage from meta
-            let voltage = if let NumassMeta::Reply(Reply::AcquirePoint {
-                external_meta: Some(ExternalMeta {hv1_value: Some(voltage), ..}), .. 
-            }) = &meta {
-                    Some(*voltage)
-            } else {
-                None
-            };
-
-            // extract start time from meta
-            let start_time = if let NumassMeta::Reply(Reply::AcquirePoint {
-                start_time, .. 
-            }) = &meta {
-                Some(start_time.to_owned())
-            } else {
-                None
-            };
-
-            let acquisition_time = if let NumassMeta::Reply(Reply::AcquirePoint {
-                acquisition_time, .. 
-            }) = &meta {
-                Some(acquisition_time.to_owned())
-            } else {
-                None
-            };
 
             PointState {
                 opened: true,
                 histogram: Some(histogram),
-                start_time,
-                acquisition_time,
-                bad_blocks,
-                voltage,
+                preprocess: Some(preprocess),
                 modified,
                 counts
             }

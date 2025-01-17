@@ -2,7 +2,7 @@ use std::{path::PathBuf, sync::Arc};
 
 use egui::{mutex::Mutex, Color32};
 use egui_plot::{GridMark, Legend, VLine};
-use processing::{histogram::PointHistogram, numass::{protos::rsb_event, NumassMeta, Reply}, preprocess::{PreprocessParams, CUTOFF_BIN_SIZE}, process::TRAPEZOID_DEFAULT, storage::{load_meta, load_point}, utils::correct_frame_time};
+use processing::{histogram::PointHistogram, numass::{protos::rsb_event, NumassMeta, Reply}, preprocess::{Preprocess, CUTOFF_BIN_SIZE}, process::TRAPEZOID_DEFAULT, storage::{load_meta, load_point}, utils::correct_frame_time};
 
 #[cfg(not(target_arch = "wasm32"))]
 use tokio::spawn;
@@ -14,7 +14,7 @@ pub struct TriggerViewer {
     meta: Arc<Mutex<Option<NumassMeta>>>,
     point: Arc<Mutex<Option<rsb_event::Point>>>,
     trigger_density: Arc<Mutex<Option<PointHistogram>>>,
-    static_params: Arc<Mutex<Option<PreprocessParams>>>, 
+    preprocess: Arc<Mutex<Option<Preprocess>>>, 
 
     /// bin size in ms
     bin_size: u64, 
@@ -26,7 +26,7 @@ impl TriggerViewer {
         let viewer = TriggerViewer {
             meta: Arc::new(Mutex::new(None)),
             point: Arc::new(Mutex::new(None)),
-            static_params: Arc::new(Mutex::new(None)),
+            preprocess: Arc::new(Mutex::new(None)),
 
             trigger_density: Arc::new(Mutex::new(None)),
             bin_size: 10,
@@ -36,7 +36,7 @@ impl TriggerViewer {
         let meta = Arc::clone(&viewer.meta);
         let point = Arc::clone(&viewer.point);
         let trigger_density = Arc::clone(&viewer.trigger_density);
-        let static_params = Arc::clone(&viewer.static_params);
+        let static_params = Arc::clone(&viewer.preprocess);
         let limit_ms = viewer.bin_size;
 
         spawn(async move {
@@ -47,7 +47,7 @@ impl TriggerViewer {
             let point_local = load_point(&filepath).await;
 
             // TODO: optimize to prevent double processing of point data
-            let static_params_local = PreprocessParams::from_point(meta_local.clone(), &point_local, &TRAPEZOID_DEFAULT);
+            let static_params_local = Preprocess::from_point(meta_local.clone(), &point_local, &TRAPEZOID_DEFAULT);
             *static_params.lock() = Some(static_params_local);
 
             *point.lock() = Some(point_local);
@@ -143,10 +143,10 @@ impl eframe::App for TriggerViewer {
                             trigger_density.draw_egui(plot_ui, None, None, None)
                         }
 
-                        if let Some(PreprocessParams {
+                        if let Some(Preprocess {
                             bad_blocks,
                             ..
-                        }) = &self.static_params.lock().as_ref() {
+                        }) = &self.preprocess.lock().as_ref() {
 
                             bad_blocks.iter().for_each(|idx| {
                                 plot_ui.vline(VLine::new(CUTOFF_BIN_SIZE as f64 * (*idx as f64)).color(Color32::WHITE).name("BAD"));
