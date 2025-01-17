@@ -4,9 +4,12 @@ use egui::Color32;
 use egui_plot::{Legend, MarkerShape, PlotUi, Points, VLine};
 
 use processing::{
-    postprocess::{post_process_frame, PostProcessParams}, preprocess::Preprocess, process::{
-        convert_to_kev, extract_waveforms, frame_to_events, ProcessParams,
-    }, storage::{load_meta, load_point}, types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform}, utils::{color_for_index, EguiLine}
+    postprocess::{post_process_frame, PostProcessParams},
+    preprocess::Preprocess,
+    process::{convert_to_kev, extract_waveforms, frame_to_events, ProcessParams},
+    storage::{load_meta, load_point},
+    types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform},
+    utils::{color_for_index, EguiLine},
 };
 
 use processing::widgets::UserInput;

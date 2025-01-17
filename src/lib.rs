@@ -6,17 +6,15 @@ use egui::mutex::Mutex;
 use processing::{utils::events_to_histogram, viewer::EMPTY_POINT};
 
 use processing::{
-    histogram::HistogramParams, 
-    process::ProcessParams,
-    postprocess::PostProcessParams,
-    viewer::PointState
+    histogram::HistogramParams, postprocess::PostProcessParams, process::ProcessParams,
+    viewer::PointState,
 };
 
 pub mod app;
-pub mod hyperlink;
-pub mod filtered_viewer;
-pub mod point_viewer;
 pub mod bundle_viewer;
+pub mod filtered_viewer;
+pub mod hyperlink;
+pub mod point_viewer;
 pub mod trigger_viewer;
 
 /// Increment processed files counter and reset it if it is finished.
@@ -27,7 +25,7 @@ pub fn inc_status(status: Arc<Mutex<ProcessingStatus>>) {
         *status = ProcessingStatus {
             running: false,
             total: 0,
-            processed: 0
+            processed: 0,
         }
     }
 }
@@ -37,21 +35,27 @@ use gloo::worker::oneshot::oneshot;
 
 #[cfg(target_arch = "wasm32")]
 #[oneshot]
-pub async fn PointProcessor(args: (PathBuf, ProcessParams, PostProcessParams, HistogramParams)) -> Option<PointState> {
+pub async fn PointProcessor(
+    args: (PathBuf, ProcessParams, PostProcessParams, HistogramParams),
+) -> Option<PointState> {
     let (filepath, process, post_process, histogram) = args;
     process_point(filepath, process, post_process, histogram).await
 }
 
-pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_process: PostProcessParams, histogram: HistogramParams) -> Option<PointState> {
-    
+pub async fn process_point(
+    filepath: PathBuf,
+    process: ProcessParams,
+    post_process: PostProcessParams,
+    histogram: HistogramParams,
+) -> Option<PointState> {
     let modified = processing::storage::load_modified_time(filepath.clone()).await; // TODO: remove clone
 
     let events = processing::storage::process_point(&filepath, &process).await;
 
     events.map(|(_, events)| {
         if let Some((events, preprocess)) = events {
-
-            let (events, preprocess) = processing::postprocess::post_process((events, preprocess), &post_process);
+            let (events, preprocess) =
+                processing::postprocess::post_process((events, preprocess), &post_process);
 
             let histogram = events_to_histogram(events, histogram);
 
@@ -62,7 +66,7 @@ pub async fn process_point(filepath: PathBuf, process: ProcessParams, post_proce
                 histogram: Some(histogram),
                 preprocess: Some(preprocess),
                 modified,
-                counts
+                counts,
             }
         } else {
             EMPTY_POINT

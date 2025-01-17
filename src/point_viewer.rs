@@ -1,9 +1,12 @@
-use std::{sync::Arc, path::PathBuf};
+use std::{path::PathBuf, sync::Arc};
 
 use egui::mutex::Mutex;
 use egui_plot::{GridMark, Legend};
 use processing::{
-    numass::protos::rsb_event, storage::load_point, types::{ProcessedWaveform, RawWaveform}, utils::{color_for_index, correct_frame_time, EguiLine} 
+    numass::protos::rsb_event,
+    storage::load_point,
+    types::{ProcessedWaveform, RawWaveform},
+    utils::{color_for_index, correct_frame_time, EguiLine},
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -16,7 +19,7 @@ use wasm_bindgen_futures::spawn_local as spawn;
 enum AppState {
     Initializing,
     FirstLoad,
-    Interactive
+    Interactive,
 }
 
 type Chunk = Vec<(u8, i64, ProcessedWaveform)>;
@@ -28,7 +31,6 @@ pub struct PointViewer {
 }
 
 fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
-
     let mut chunks = vec![];
     chunks.push(vec![]);
 
@@ -36,7 +38,7 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
         for block in channel.blocks {
             for frame in block.frames {
                 let chunk_num = (correct_frame_time(frame.time) / limit_ns) as usize;
-                
+
                 while chunks.len() < chunk_num + 1 {
                     chunks.push(vec![])
                 }
@@ -46,7 +48,7 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
                 chunks[chunk_num].push((
                     channel.id as u8,
                     (correct_frame_time(frame.time) % limit_ns) as i64,
-                    waveform
+                    waveform,
                 ));
             }
         }
@@ -57,7 +59,6 @@ fn point_to_chunks(point: rsb_event::Point, limit_ns: u64) -> Vec<Chunk> {
 
 impl PointViewer {
     pub fn init_with_point(filepath: PathBuf) -> Self {
-
         let viewer = PointViewer {
             chunks: Arc::new(Mutex::new(None)),
             current_chunk: 0,
@@ -66,7 +67,7 @@ impl PointViewer {
 
         let chunks = Arc::clone(&viewer.chunks);
         let state = Arc::clone(&viewer.state);
-        
+
         spawn(async move {
             let point = load_point(&filepath).await;
             *chunks.lock() = Some(point_to_chunks(point, 1_000_000));
@@ -80,7 +81,6 @@ impl PointViewer {
 impl eframe::App for PointViewer {
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-
         let state = self.state.lock().clone();
 
         match state {
@@ -109,7 +109,7 @@ impl eframe::App for PointViewer {
                         #[cfg(not(target_arch = "wasm32"))]
                         let width = {
                             let mut x = 0.0;
-                            ctx.input(|i| {x = i.viewport().inner_rect.unwrap().size().x});
+                            ctx.input(|i| x = i.viewport().inner_rect.unwrap().size().x);
                             x
                         };
                         #[cfg(target_arch = "wasm32")]
@@ -119,9 +119,9 @@ impl eframe::App for PointViewer {
                             .unwrap()
                             .as_f64()
                             .unwrap() as f32;
-            
+
                         ui.style_mut().spacing.slider_width = width - 150.0;
-            
+
                         ui.horizontal(|ui| {
                             ui.add(
                                 egui::Slider::new(&mut self.current_chunk, 0..=chunks.len() - 1)
@@ -135,18 +135,21 @@ impl eframe::App for PointViewer {
                                 self.current_chunk += 1;
                             }
                         });
-            
-                        egui_plot::Plot::new("waveforms").legend(Legend::default())
-                            .x_axis_formatter(|GridMark { value, ..}, _, _| format!("{value:.3} μs"))
+
+                        egui_plot::Plot::new("waveforms")
+                            .legend(Legend::default())
+                            .x_axis_formatter(|GridMark { value, .. }, _, _| {
+                                format!("{value:.3} μs")
+                            })
                             .show(ui, |plot_ui| {
-
-                                for (ch_num, offset, waveform) in chunks[self.current_chunk].clone() {
-
+                                for (ch_num, offset, waveform) in chunks[self.current_chunk].clone()
+                                {
                                     waveform.draw_egui(
-                                        plot_ui, 
-                                        Some(&format!("ch #{}", ch_num + 1)), 
+                                        plot_ui,
+                                        Some(&format!("ch #{}", ch_num + 1)),
                                         Some(color_for_index((ch_num) as usize)),
-                                         None, Some(offset)
+                                        None,
+                                        Some(offset),
                                     );
                                 }
                             });

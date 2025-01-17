@@ -33,7 +33,7 @@ async fn main() {
         process: Option<String>,
         /// postprocess params serialized to json
         #[clap(long)]
-        postprocess: Option<String>
+        postprocess: Option<String>,
     }
 
     let args = Opt::parse();
@@ -52,7 +52,8 @@ async fn main() {
         processing::postprocess::PostProcessParams::default()
     };
 
-    let viewer = FilteredViewer::init_with_point(filepath.clone(), process, postprocess, range).await;
+    let viewer =
+        FilteredViewer::init_with_point(filepath.clone(), process, postprocess, range).await;
 
     let native_options = eframe::NativeOptions::default();
     eframe::run_native(

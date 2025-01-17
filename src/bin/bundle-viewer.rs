@@ -41,7 +41,6 @@ async fn main() {
         std::fs::canonicalize(&filepath).unwrap().to_str().unwrap(),
         native_options,
         Box::new(|ctx| {
-            
             let process = if let Some(process) = args.process {
                 serde_json::from_str(&process).expect("cant parse algorithm param")
             } else {

@@ -9,7 +9,12 @@ use eframe::{
 use egui_plot::{HLine, Legend, Plot, PlotPoint, Points, VLine};
 
 use globset::GlobMatcher;
-use processing::{preprocess::Preprocess, storage::LoadState, viewer::{ViewerState, EMPTY_POINT}, widgets::UserInput};
+use processing::{
+    preprocess::Preprocess,
+    storage::LoadState,
+    viewer::{ViewerState, EMPTY_POINT},
+    widgets::UserInput,
+};
 
 #[cfg(not(target_arch = "wasm32"))]
 use {
@@ -277,10 +282,7 @@ impl DataViewerApp {
                                 for (name, cache) in state_sorted.iter() {
                                     if let PointState {
                                         counts: Some(counts),
-                                        preprocess: Some(Preprocess {
-                                            start_time,
-                                            ..
-                                        }),
+                                        preprocess: Some(Preprocess { start_time, .. }),
                                         ..
                                     } = cache
                                     {
@@ -320,13 +322,15 @@ impl DataViewerApp {
                                         ..
                                     } = cache
                                     {
-                                        let count_rate =  if processing_params.post_process.cut_bad_blocks {
-                                            *counts as f64 / (
-                                                preprocess.effective_time() as f32 * 1e-9
-                                            ) as f64
-                                        } else {
-                                            *counts as f64 / preprocess.acquisition_time as f64 * 1e-9
-                                        };
+                                        let count_rate =
+                                            if processing_params.post_process.cut_bad_blocks {
+                                                *counts as f64
+                                                    / (preprocess.effective_time() as f32 * 1e-9)
+                                                        as f64
+                                            } else {
+                                                *counts as f64 / preprocess.acquisition_time as f64
+                                                    * 1e-9
+                                            };
 
                                         let point_name = {
                                             let temp = PathBuf::from(name);
@@ -334,7 +338,8 @@ impl DataViewerApp {
                                         };
 
                                         data.push_str(&format!(
-                                            "{point_name:?}\t{}\t{count_rate}\n", preprocess.hv
+                                            "{point_name:?}\t{}\t{count_rate}\n",
+                                            preprocess.hv
                                         ));
                                     }
                                 }
@@ -704,13 +709,17 @@ impl eframe::App for DataViewerApp {
                                     let processing_params = self.processing_params.lock().clone();
                                     if processing_params.post_process.cut_bad_blocks {
                                         Some([
-                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
-                                            *counts as f64 / preprocess.effective_time() as f64 * 1e-9,
+                                            preprocess.start_time.and_utc().timestamp_millis()
+                                                as f64,
+                                            *counts as f64 / preprocess.effective_time() as f64
+                                                * 1e-9,
                                         ])
                                     } else {
                                         Some([
-                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
-                                            *counts as f64 / preprocess.acquisition_time as f64 * 1e-9
+                                            preprocess.start_time.and_utc().timestamp_millis()
+                                                as f64,
+                                            *counts as f64 / preprocess.acquisition_time as f64
+                                                * 1e-9,
                                         ])
                                     }
                                 } else {
@@ -739,19 +748,18 @@ impl eframe::App for DataViewerApp {
                                 {
                                     let processing_params = self.processing_params.lock().clone();
                                     if processing_params.post_process.cut_bad_blocks {
-
                                         Some([
                                             preprocess.hv as f64,
-                                            *counts as f64 / (preprocess.effective_time() as f64 * 1e-9)
+                                            *counts as f64
+                                                / (preprocess.effective_time() as f64 * 1e-9),
                                         ])
-
                                     } else {
                                         Some([
                                             preprocess.hv as f64,
-                                            *counts as f64 / (preprocess.acquisition_time as f64 * 1e-9)
+                                            *counts as f64
+                                                / (preprocess.acquisition_time as f64 * 1e-9),
                                         ])
                                     }
-                                    
                                 } else {
                                     None
                                 }
@@ -762,40 +770,47 @@ impl eframe::App for DataViewerApp {
 
                         if plot_ui.response().clicked() {
                             if let Some(pos) = plot_ui.pointer_coordinate() {
-                                let clicked_file = opened_files.iter().filter_map(|(path, cache)| {
-                                    if let PointState {
-                                        counts: Some(counts),
-                                        preprocess: Some(preprocess),
-                                        ..
-                                    } = cache
-                                    {
-                                        let processing_params = self.processing_params.lock().clone();
+                                let clicked_file = opened_files
+                                    .iter()
+                                    .filter_map(|(path, cache)| {
+                                        if let PointState {
+                                            counts: Some(counts),
+                                            preprocess: Some(preprocess),
+                                            ..
+                                        } = cache
+                                        {
+                                            let processing_params =
+                                                self.processing_params.lock().clone();
 
-                                        // TODO: deduplicate this code
-                                        let point_pos = if processing_params.post_process.cut_bad_blocks {
+                                            // TODO: deduplicate this code
+                                            let point_pos =
+                                                if processing_params.post_process.cut_bad_blocks {
+                                                    PlotPoint::new(
+                                                        preprocess.hv,
+                                                        *counts as f64
+                                                            / preprocess.effective_time() as f64
+                                                            * 1e-9,
+                                                    )
+                                                } else {
+                                                    PlotPoint::new(
+                                                        preprocess.hv,
+                                                        *counts as f64
+                                                            / preprocess.acquisition_time as f64
+                                                            * 1e-9,
+                                                    )
+                                                };
 
-                                            PlotPoint::new(
-                                                preprocess.hv,
-                                                *counts as f64 / preprocess.effective_time() as f64 * 1e-9
-                                            )
-
+                                            let distance =
+                                                point_pos.to_pos2().distance(pos.to_pos2());
+                                            if distance < 1e5 {
+                                                return Some((path, distance));
+                                            }
+                                            None
                                         } else {
-                                            PlotPoint::new(
-                                                preprocess.hv,
-                                                *counts as f64 / preprocess.acquisition_time as f64 * 1e-9
-                                            )
-                                        };
-
-
-                                        let distance = point_pos.to_pos2().distance(pos.to_pos2());
-                                        if distance < 1e5 {
-                                            return Some((path, distance));
+                                            None
                                         }
-                                        None
-                                    } else {
-                                        None
-                                    }
-                                }).min_by_key(|(_, distance)| (distance * 1000.0) as i64);
+                                    })
+                                    .min_by_key(|(_, distance)| (distance * 1000.0) as i64);
 
                                 if let Some((path, _)) = clicked_file {
                                     let path = (**path).clone();
@@ -818,9 +833,12 @@ impl eframe::App for DataViewerApp {
                         if let Some(current) = &self.current_path {
                             if let PointState {
                                 counts: Some(counts),
-                                preprocess: Some(Preprocess {
-                                    acquisition_time, hv, ..
-                                }),
+                                preprocess:
+                                    Some(Preprocess {
+                                        acquisition_time,
+                                        hv,
+                                        ..
+                                    }),
                                 ..
                             } = state[current]
                             {
@@ -1025,7 +1043,7 @@ impl eframe::App for DataViewerApp {
                         let search = serde_qs::to_string(&ViewerMode::Bundles {
                             filepath: PathBuf::from(filepath),
                             process,
-                            postprocess
+                            postprocess,
                         })
                         .unwrap();
                         window()

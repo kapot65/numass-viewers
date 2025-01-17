@@ -1,4 +1,4 @@
-use egui::{WidgetText, Response, Widget, Link, Ui};
+use egui::{Link, Response, Ui, Widget, WidgetText};
 
 // modified version of egui::Hyperlink that will always open in a new window
 // TODO: change to standart egui::Hyperlink when it will be possible to open links in new window
