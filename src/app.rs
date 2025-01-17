@@ -276,23 +276,33 @@ impl DataViewerApp {
                             PlotMode::PPT => {
                                 let mut data = String::new();
                                 {
-                                    data.push_str("path\ttime\ttime_raw\tcounts\n");
+                                    data.push_str("path\ttime\ttime_raw\tcount_rate\tcounts\teffective_time\n");
                                 }
 
                                 for (name, cache) in state_sorted.iter() {
                                     if let PointState {
                                         counts: Some(counts),
-                                        preprocess: Some(Preprocess { start_time, .. }),
+                                        preprocess: Some(preprocess),
                                         ..
                                     } = cache
                                     {
+                                        let effective_time = if processing_params.post_process.cut_bad_blocks {
+                                            preprocess.effective_time() as f32 * 1e-9
+                                        } else {
+                                            preprocess.acquisition_time as f32 * 1e-9
+                                        };
+
+                                        let count_rate = *counts as f32 / effective_time;
+
                                         let point_name = {
                                             let temp = PathBuf::from(name);
                                             temp.file_name().unwrap().to_owned()
                                         };
 
+                                        let start_time = preprocess.start_time;
+                                        
                                         data.push_str(&format!(
-                                            "{point_name:?}\t{start_time:?}\t{}\t{counts}\n",
+                                            "{point_name:?}\t{start_time:?}\t{}\t{count_rate}\t{counts}\t{effective_time}\n",
                                             start_time.and_utc().timestamp()
                                         ));
                                     }
@@ -312,7 +322,7 @@ impl DataViewerApp {
                             PlotMode::PPV => {
                                 let mut data = String::new();
                                 {
-                                    data.push_str("path\tvoltage\tcount_rate\n");
+                                    data.push_str("path\tvoltage\tcount_rate\tcounts\teffective_time\n");
                                 }
 
                                 for (name, cache) in state_sorted.iter() {
@@ -322,15 +332,13 @@ impl DataViewerApp {
                                         ..
                                     } = cache
                                     {
-                                        let count_rate =
-                                            if processing_params.post_process.cut_bad_blocks {
-                                                *counts as f64
-                                                    / (preprocess.effective_time() as f32 * 1e-9)
-                                                        as f64
-                                            } else {
-                                                *counts as f64 / preprocess.acquisition_time as f64
-                                                    * 1e-9
-                                            };
+                                        let effective_time = if processing_params.post_process.cut_bad_blocks {
+                                            preprocess.effective_time() as f32 * 1e-9
+                                        } else {
+                                            preprocess.acquisition_time as f32 * 1e-9
+                                        };
+
+                                        let count_rate = *counts as f32 / effective_time;
 
                                         let point_name = {
                                             let temp = PathBuf::from(name);
@@ -338,7 +346,7 @@ impl DataViewerApp {
                                         };
 
                                         data.push_str(&format!(
-                                            "{point_name:?}\t{}\t{count_rate}\n",
+                                            "{point_name:?}\t{}\t{count_rate}\t{counts}\t{effective_time}\n",
                                             preprocess.hv
                                         ));
                                     }
@@ -709,17 +717,13 @@ impl eframe::App for DataViewerApp {
                                     let processing_params = self.processing_params.lock().clone();
                                     if processing_params.post_process.cut_bad_blocks {
                                         Some([
-                                            preprocess.start_time.and_utc().timestamp_millis()
-                                                as f64,
-                                            *counts as f64 / preprocess.effective_time() as f64
-                                                * 1e-9,
+                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
+                                            *counts as f64 / (preprocess.effective_time() as f64 * 1e-9),
                                         ])
                                     } else {
                                         Some([
-                                            preprocess.start_time.and_utc().timestamp_millis()
-                                                as f64,
-                                            *counts as f64 / preprocess.acquisition_time as f64
-                                                * 1e-9,
+                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
+                                            *counts as f64 / (preprocess.acquisition_time as f64 * 1e-9)
                                         ])
                                     }
                                 } else {
