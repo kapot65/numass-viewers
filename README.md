@@ -31,4 +31,4 @@
 ### VSCode doesn't see numass-* packages in WASM workspace
 - delete `git` folder in `~/.cargo` to force cargo to re-fetch
     > [!NOTE]
-    > Возможно сработает просто `cargo update`
+    > Возможно сработает просто `cargo update` (работает)

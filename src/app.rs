@@ -71,9 +71,8 @@ pub struct DataViewerApp {
     select_single: bool,
     glob_pattern: String,
     plot_mode: PlotMode,
+    processing_params: ViewerState,
     processing_status: Arc<Mutex<ProcessingStatus>>,
-    processing_params: Arc<Mutex<ViewerState>>,
-
     state: Arc<Mutex<BTreeMap<String, PointState>>>,
     current_path: Option<String>,
 
@@ -82,37 +81,30 @@ pub struct DataViewerApp {
 }
 
 impl DataViewerApp {
-    pub fn new() -> Self {
-        let state = Arc::new(Mutex::new(BTreeMap::new()));
-        let processing_status = Arc::new(Mutex::new(ProcessingStatus {
-            running: false,
-            total: 0,
-            processed: 0,
-        }));
 
-        Self {
-            #[cfg(not(target_arch = "wasm32"))]
-            root: Arc::new(tokio::sync::Mutex::new(None)),
-            #[cfg(target_arch = "wasm32")]
-            root: Arc::new(std::sync::Mutex::new(None)),
-            select_single: false,
-            glob_pattern: "*/Tritium_1/set_[123]/p*(HV1=14000)".to_owned(),
-            state,
-            current_path: None,
-            processing_status,
-            processing_params: Arc::new(Mutex::new(ViewerState::default())),
-            plot_mode: PlotMode::Histogram,
-            #[cfg(target_arch = "wasm32")]
-            processor_pool: {
-                let concurrency =
-                    gloo::utils::window().navigator().hardware_concurrency() as usize - 1;
-                (0..concurrency)
-                    .collect::<std::vec::Vec<usize>>()
-                    .into_iter()
-                    .map(|_| PointProcessor::spawner().spawn("./worker.js"))
-                    .collect::<Vec<_>>()
-            },
-        }
+    fn params_editor(&mut self, ui: &mut Ui, ctx: &egui::Context) {
+
+        let process = self.processing_params.process.input(ui, ctx);
+    
+        ui.separator();
+    
+        let post_process = self.processing_params.post_process.input(ui, ctx);
+    
+        ui.separator();
+    
+        let histogram = self.processing_params.histogram.input(ui, ctx);
+    
+        let changed = self.processing_params.changed
+            || (process != self.processing_params.process
+                || post_process != self.processing_params.post_process
+                || histogram != self.processing_params.histogram);
+    
+        self.processing_params = ViewerState {
+            process,
+            post_process,
+            histogram,
+            changed,
+        };
     }
 
     fn files_editor(&mut self, ui: &mut Ui) {
@@ -233,7 +225,7 @@ impl DataViewerApp {
                 let state = self.state.lock().clone();
                 let plot_mode = self.plot_mode;
 
-                let processing_params = self.processing_params.lock().clone();
+                let processing_params = self.processing_params.clone();
 
                 spawn(async move {
                     #[cfg(not(target_arch = "wasm32"))]
@@ -403,11 +395,11 @@ impl DataViewerApp {
         });
     }
 
-    pub fn process(&self) {
-        let changed = self.processing_params.lock().changed;
-        self.processing_params.lock().changed = false;
+    pub fn process(&mut self) {
+        let changed = self.processing_params.changed;
+        self.processing_params.changed = false;
 
-        let params = self.processing_params.lock().clone();
+        let params = self.processing_params.clone();
         let state = Arc::clone(&self.state);
         let status = Arc::clone(&self.processing_status);
 
@@ -503,7 +495,36 @@ impl DataViewerApp {
 
 impl Default for DataViewerApp {
     fn default() -> Self {
-        Self::new()
+        let state = Arc::new(Mutex::new(BTreeMap::new()));
+        let processing_status = Arc::new(Mutex::new(ProcessingStatus {
+            running: false,
+            total: 0,
+            processed: 0,
+        }));
+
+        Self {
+            #[cfg(not(target_arch = "wasm32"))]
+            root: Arc::new(tokio::sync::Mutex::new(None)),
+            #[cfg(target_arch = "wasm32")]
+            root: Arc::new(std::sync::Mutex::new(None)),
+            select_single: false,
+            glob_pattern: "*/Tritium_1/set_[123]/p*(HV1=14000)".to_owned(),
+            state,
+            current_path: None,
+            processing_status,
+            processing_params: ViewerState::default(),
+            plot_mode: PlotMode::Histogram,
+            #[cfg(target_arch = "wasm32")]
+            processor_pool: {
+                let concurrency =
+                    gloo::utils::window().navigator().hardware_concurrency() as usize - 1;
+                (0..concurrency)
+                    .collect::<std::vec::Vec<usize>>()
+                    .into_iter()
+                    .map(|_| PointProcessor::spawner().spawn("./worker.js"))
+                    .collect::<Vec<_>>()
+            },
+        }
     }
 }
 
@@ -593,38 +614,12 @@ fn file_tree_entry(
     }
 }
 
-fn params_editor(ui: &mut Ui, ctx: &egui::Context, state: ViewerState) -> ViewerState {
-    let process = state.process.input(ui, ctx);
-
-    ui.separator();
-
-    let post_process = state.post_process.input(ui, ctx);
-
-    ui.separator();
-
-    let histogram = state.histogram.input(ui, ctx);
-
-    let changed = state.changed
-        || (process != state.process
-            || post_process != state.post_process
-            || histogram != state.histogram);
-
-    ViewerState {
-        process,
-        post_process,
-        histogram,
-        changed,
-    }
-}
-
 impl eframe::App for DataViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
 
         egui::SidePanel::left("left").show(ctx, |ui| {
-            let mut processing_params = self.processing_params.lock();
-            *processing_params = params_editor(ui, ctx, processing_params.clone());
-            drop(processing_params);
+            self.params_editor(ui, ctx);
 
             ui.separator();
 
@@ -714,8 +709,7 @@ impl eframe::App for DataViewerApp {
                                     ..
                                 } = cache
                                 {
-                                    let processing_params = self.processing_params.lock().clone();
-                                    if processing_params.post_process.cut_bad_blocks {
+                                    if self.processing_params.post_process.cut_bad_blocks {
                                         Some([
                                             preprocess.start_time.and_utc().timestamp_millis() as f64,
                                             *counts as f64 / (preprocess.effective_time() as f64 * 1e-9),
@@ -750,8 +744,7 @@ impl eframe::App for DataViewerApp {
                                     ..
                                 } = cache
                                 {
-                                    let processing_params = self.processing_params.lock().clone();
-                                    if processing_params.post_process.cut_bad_blocks {
+                                    if self.processing_params.post_process.cut_bad_blocks {
                                         Some([
                                             preprocess.hv as f64,
                                             *counts as f64
@@ -783,12 +776,9 @@ impl eframe::App for DataViewerApp {
                                             ..
                                         } = cache
                                         {
-                                            let processing_params =
-                                                self.processing_params.lock().clone();
-
                                             // TODO: deduplicate this code
                                             let point_pos =
-                                                if processing_params.post_process.cut_bad_blocks {
+                                                if self.processing_params.post_process.cut_bad_blocks {
                                                     PlotPoint::new(
                                                         preprocess.hv,
                                                         *counts as f64
@@ -885,8 +875,6 @@ impl eframe::App for DataViewerApp {
                         }
                     });
 
-                let process = self.processing_params.lock().process.clone();
-                let postprocess = self.processing_params.lock().post_process;
 
                 if filtered_viewer_button.clicked() {
                     let filepath = marked_point.unwrap();
@@ -898,9 +886,9 @@ impl eframe::App for DataViewerApp {
                         command
                             .arg(filepath)
                             .arg("--process")
-                            .arg(serde_json::to_string(&process).unwrap())
+                            .arg(serde_json::to_string(&self.processing_params.process).unwrap())
                             .arg("--postprocess")
-                            .arg(serde_json::to_string(&postprocess).unwrap());
+                            .arg(serde_json::to_string(&self.processing_params.post_process).unwrap());
 
                         if self.plot_mode == PlotMode::Histogram {
                             command
@@ -916,8 +904,8 @@ impl eframe::App for DataViewerApp {
                     {
                         let search = serde_qs::to_string(&ViewerMode::FilteredEvents {
                             filepath: PathBuf::from(filepath),
-                            process: process.clone(),
-                            postprocess,
+                            process: self.processing_params.process.clone(),
+                            postprocess: self.processing_params.post_process,
                             range: left_border.max(0.0)..right_border.max(0.0), // TODO: fix
                         })
                         .unwrap();
@@ -1036,18 +1024,19 @@ impl eframe::App for DataViewerApp {
                         tokio::process::Command::new("bundle-viewer")
                             .arg(filepath)
                             .arg("--process")
-                            .arg(serde_json::to_string(&process).unwrap())
+                            .arg(serde_json::to_string(&self.processing_params.process).unwrap())
                             .arg("--postprocess")
-                            .arg(serde_json::to_string(&postprocess).unwrap())
+                            .arg(serde_json::to_string(&self.processing_params.post_process).unwrap())
                             .spawn()
                             .unwrap();
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
+                        
                         let search = serde_qs::to_string(&ViewerMode::Bundles {
                             filepath: PathBuf::from(filepath),
-                            process,
-                            postprocess,
+                            process: self.processing_params.process.clone(),
+                            postprocess: self.processing_params.post_process,
                         })
                         .unwrap();
                         window()
@@ -1057,7 +1046,6 @@ impl eframe::App for DataViewerApp {
                     }
                 }
 
-                // let mut plo = processing_params.algorithm;
                 ui.radio_value(&mut self.plot_mode, PlotMode::Histogram, "Hist");
                 ui.radio_value(&mut self.plot_mode, PlotMode::PPT, "PPT");
                 ui.radio_value(&mut self.plot_mode, PlotMode::PPV, "PPV");

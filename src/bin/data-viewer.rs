@@ -44,7 +44,7 @@ async fn main() -> eframe::Result<()> {
         Box::new(|ctx| {
             install_image_loaders(&ctx.egui_ctx);
             ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-            let app = app::DataViewerApp::new();
+            let app = app::DataViewerApp::default();
             if let Some(directory) = opt.directory {
                 *app.root.try_lock().unwrap() = Some(FSRepr::new(directory))
             }
@@ -187,7 +187,7 @@ fn main() {
                         Box::new(|ctx| {
                             install_image_loaders(&ctx.egui_ctx);
                             ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                            let app = app::DataViewerApp::new();
+                            let app = app::DataViewerApp::default();
                             Box::new(app)
                         }),
                     )
