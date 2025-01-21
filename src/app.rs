@@ -8,8 +8,8 @@ use eframe::{
 };
 use egui_plot::{HLine, Legend, Plot, PlotPoint, Points, VLine};
 
-use globset::GlobMatcher;
 use processing::{
+    histogram::PointHistogram,
     preprocess::Preprocess,
     storage::LoadState,
     viewer::{ViewerState, EMPTY_POINT},
@@ -21,8 +21,6 @@ use {
     crate::process_point,
     home::home_dir,
     processing::{storage::FSRepr, viewer::PointState},
-    std::fs::File,
-    std::io::Write,
     tokio::spawn,
     which::which,
 };
@@ -63,42 +61,54 @@ pub struct ProcessingStatus {
     pub processed: usize,
 }
 
+#[derive(Debug)]
+struct FileTreeState {
+    pub need_process: bool,
+    pub need_load: bool,
+}
+
 pub struct DataViewerApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub root: Arc<tokio::sync::Mutex<Option<FSRepr>>>,
     #[cfg(target_arch = "wasm32")]
     pub root: Arc<std::sync::Mutex<Option<FSRepr>>>,
+
     select_single: bool,
-    glob_pattern: String,
+
+    /// Фильтр по имени файла (прячет файлы, не содержащие подстроки в имени в виджете файлового дерева)
+    name_contains: String,
+
     plot_mode: PlotMode,
     processing_params: ViewerState,
+    current_path: Option<String>,
+
     processing_status: Arc<Mutex<ProcessingStatus>>,
     state: Arc<Mutex<BTreeMap<String, PointState>>>,
-    current_path: Option<String>,
 
     #[cfg(target_arch = "wasm32")]
     processor_pool: Vec<OneshotBridge<PointProcessor>>,
 }
 
 impl DataViewerApp {
-
+    /// Draws processing parameters editor and handles input from user.
+    ///
+    /// Updated values will be written to [processing_params](DataViewerApp::processing_params) immediately.
     fn params_editor(&mut self, ui: &mut Ui, ctx: &egui::Context) {
-
         let process = self.processing_params.process.input(ui, ctx);
-    
+
         ui.separator();
-    
+
         let post_process = self.processing_params.post_process.input(ui, ctx);
-    
+
         ui.separator();
-    
+
         let histogram = self.processing_params.histogram.input(ui, ctx);
-    
+
         let changed = self.processing_params.changed
             || (process != self.processing_params.process
                 || post_process != self.processing_params.post_process
                 || histogram != self.processing_params.histogram);
-    
+
         self.processing_params = ViewerState {
             process,
             post_process,
@@ -107,6 +117,111 @@ impl DataViewerApp {
         };
     }
 
+    /// files open button with logic embedded
+    fn files_open_button(&mut self, ui: &mut Ui) {
+        if ui.button("open").clicked() {
+            let root = Arc::clone(&self.root);
+
+            spawn(async move {
+                #[cfg(not(target_arch = "wasm32"))]
+                if let Some(root_path) = rfd::FileDialog::new().pick_folder() {
+                    root.lock().await.replace(FSRepr::new(root_path));
+                }
+                #[cfg(target_arch = "wasm32")]
+                {
+                    let resp = Request::get("/api/root").send().await.unwrap();
+                    let root_local = resp.json::<FSRepr>().await.unwrap();
+                    root.lock().unwrap().replace(root_local);
+                }
+            });
+        }
+    }
+
+    /// files reload button with logic embedded
+    /// # Arguments
+    ///
+    /// * `root` - delocked [root](DataViewerApp::root) instance (used to prevent multiple lockings since we should already have a copy).
+    ///
+    fn files_reload_button(&mut self, ui: &mut Ui, root: &Option<FSRepr>) {
+        let path = root.clone().map(|root| root.to_filename());
+        if path.is_some() && ui.button("reload").clicked() {
+            if let Some(mut root) = root.clone() {
+                let root_out = Arc::clone(&self.root);
+
+                spawn(async move {
+                    root.update_reccurently().await;
+                    if let Ok(mut out) = root_out.try_lock() {
+                        out.replace(root);
+                    }
+                });
+            }
+        }
+    }
+
+    /// files process input (spinner + apply button) with logic embedded
+    fn files_process_button(&mut self, ui: &mut Ui) {
+        let ProcessingStatus {
+            running,
+            total,
+            processed,
+        } = *self.processing_status.lock();
+
+        if running {
+            ui.horizontal(|ui| {
+                ui.label(format!("{processed}/{total}"));
+                ui.spinner();
+            });
+        } else if ui.button("apply").clicked() {
+            self.process()
+        }
+    }
+
+    fn files_save_button(&mut self, ui: &mut Ui) {
+        if ui.button("save").clicked() {
+            let state = self.state.lock().clone();
+            let plot_mode = self.plot_mode;
+            let processing_params = self.processing_params.clone();
+
+            spawn(async move {
+                #[cfg(not(target_arch = "wasm32"))]
+                let save_folder = rfd::FileDialog::new()
+                    .set_directory(home_dir().unwrap())
+                    .pick_folder();
+                #[cfg(target_arch = "wasm32")]
+                let save_folder = Some(PathBuf::new());
+
+                if let Some(save_folder) = save_folder {
+                    let state_sorted = {
+                        let mut state = state.iter().collect::<Vec<_>>();
+                        state.sort_by(|(key_1, _), (key_2, _)| natord::compare(key_1, key_2));
+                        state
+                    };
+
+                    match plot_mode {
+                        PlotMode::Histogram => {
+                            DataViewerApp::files_save_histograms(&save_folder, &state_sorted)
+                        }
+                        PlotMode::PPT => {
+                            DataViewerApp::files_save_ppt(
+                                &save_folder,
+                                &state_sorted,
+                                &processing_params,
+                            );
+                        }
+                        PlotMode::PPV => {
+                            DataViewerApp::files_save_ppv(
+                                &save_folder,
+                                &state_sorted,
+                                &processing_params,
+                            );
+                        }
+                    }
+                }
+            });
+        }
+    }
+
+    /// Draws file editor and handles user inputs.
     fn files_editor(&mut self, ui: &mut Ui) {
         let mut root_copy = {
             if let Ok(root) = self.root.try_lock() {
@@ -120,245 +235,22 @@ impl DataViewerApp {
         ui.checkbox(&mut self.select_single, "select single");
 
         ui.horizontal(|ui| {
-            ui.add_sized(
-                [200.0, 20.0],
-                egui::TextEdit::singleline(&mut self.glob_pattern),
-            );
-
-            let glob = globset::Glob::new(&self.glob_pattern);
-            if ui
-                .add_enabled(glob.is_ok(), egui::Button::new("match"))
-                .clicked()
-            {
-                let glob = glob.unwrap().compile_matcher();
-
-                let root = root_copy.clone();
-                let state = Arc::clone(&self.state);
-
-                if let Some(root) = root {
-                    spawn(async move {
-                        let mut matched = vec![];
-
-                        fn process_leaf(
-                            leaf: FSRepr,
-                            glob: &GlobMatcher,
-                            matched: &mut Vec<String>,
-                        ) {
-                            match leaf {
-                                FSRepr::File { path, .. } => {
-                                    if glob.is_match(&path) {
-                                        matched.push(path.to_str().unwrap().to_owned())
-                                    }
-                                }
-                                FSRepr::Directory { children, .. } => {
-                                    for child in children {
-                                        process_leaf(child, glob, matched)
-                                    }
-                                }
-                            }
-                        }
-                        process_leaf(root, &glob, &mut matched);
-
-                        let mut state = state.lock();
-                        state.clear();
-
-                        for path in matched {
-                            state.entry(path).or_insert(EMPTY_POINT).opened = true;
-                        }
-                    });
-                }
-            }
+            ui.label("name contains:");
+            ui.text_edit_singleline(&mut self.name_contains);
         });
 
         ui.horizontal(|ui| {
-            if ui.button("open").clicked() {
-                let root = Arc::clone(&self.root);
+            self.files_open_button(ui);
 
-                spawn(async move {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    if let Some(root_path) = rfd::FileDialog::new().pick_folder() {
-                        root.lock().await.replace(FSRepr::new(root_path));
-                    }
-                    #[cfg(target_arch = "wasm32")]
-                    {
-                        let resp = Request::get("/api/root").send().await.unwrap();
-                        let root_local = resp.json::<FSRepr>().await.unwrap();
-                        root.lock().unwrap().replace(root_local);
-                    }
-                });
-            }
+            self.files_reload_button(ui, &root_copy);
 
-            let path = root_copy.clone().map(|root| root.to_filename());
-            if path.is_some() && ui.button("reload").clicked() {
-                if let Some(mut root) = root_copy.clone() {
-                    let root_out = Arc::clone(&self.root);
-
-                    spawn(async move {
-                        root.update_reccurently().await;
-                        if let Ok(mut out) = root_out.try_lock() {
-                            out.replace(root);
-                        }
-                    });
-                }
-            }
-
-            let ProcessingStatus {
-                running,
-                total,
-                processed,
-            } = *self.processing_status.lock();
-
-            if running {
-                ui.horizontal(|ui| {
-                    ui.label(format!("{processed}/{total}"));
-                    ui.spinner();
-                });
-            } else if ui.button("apply").clicked() {
-                self.process()
-            }
+            self.files_process_button(ui);
 
             if ui.button("clear").clicked() {
                 self.state.lock().clear()
             }
 
-            if ui.button("save").clicked() {
-                let state = self.state.lock().clone();
-                let plot_mode = self.plot_mode;
-
-                let processing_params = self.processing_params.clone();
-
-                spawn(async move {
-                    #[cfg(not(target_arch = "wasm32"))]
-                    let save_folder = rfd::FileDialog::new()
-                        .set_directory(home_dir().unwrap())
-                        .pick_folder();
-                    #[cfg(target_arch = "wasm32")]
-                    let save_folder = Some(PathBuf::new());
-
-                    if let Some(save_folder) = save_folder {
-                        let state_sorted = {
-                            let mut state = state.iter().collect::<Vec<_>>();
-                            state.sort_by(|(key_1, _), (key_2, _)| natord::compare(key_1, key_2));
-                            state
-                        };
-
-                        match plot_mode {
-                            PlotMode::Histogram => {
-                                for (name, cache) in state_sorted.iter() {
-                                    if let Some(histogram) = &cache.histogram {
-                                        let point_name = {
-                                            let temp = PathBuf::from(name);
-                                            temp.file_name().unwrap().to_owned()
-                                        };
-
-                                        let data = histogram.to_csv('\t');
-
-                                        let mut filepath = save_folder.clone();
-                                        filepath.push(point_name);
-
-                                        #[cfg(not(target_arch = "wasm32"))]
-                                        {
-                                            std::fs::write(filepath, data).unwrap();
-                                        }
-                                        #[cfg(target_arch = "wasm32")]
-                                        download(filepath.to_str().unwrap(), &data);
-                                    }
-                                }
-                            }
-                            PlotMode::PPT => {
-                                let mut data = String::new();
-                                {
-                                    data.push_str("path\ttime\ttime_raw\tcount_rate\tcounts\teffective_time\n");
-                                }
-
-                                for (name, cache) in state_sorted.iter() {
-                                    if let PointState {
-                                        counts: Some(counts),
-                                        preprocess: Some(preprocess),
-                                        ..
-                                    } = cache
-                                    {
-                                        let effective_time = if processing_params.post_process.cut_bad_blocks {
-                                            preprocess.effective_time() as f32 * 1e-9
-                                        } else {
-                                            preprocess.acquisition_time as f32 * 1e-9
-                                        };
-
-                                        let count_rate = *counts as f32 / effective_time;
-
-                                        let point_name = {
-                                            let temp = PathBuf::from(name);
-                                            temp.file_name().unwrap().to_owned()
-                                        };
-
-                                        let start_time = preprocess.start_time;
-                                        
-                                        data.push_str(&format!(
-                                            "{point_name:?}\t{start_time:?}\t{}\t{count_rate}\t{counts}\t{effective_time}\n",
-                                            start_time.and_utc().timestamp()
-                                        ));
-                                    }
-                                }
-
-                                let mut filepath = save_folder;
-                                filepath.push("PPT.tsv");
-
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    let mut out_file = File::create(filepath).unwrap();
-                                    out_file.write_all(data.as_bytes()).unwrap();
-                                }
-                                #[cfg(target_arch = "wasm32")]
-                                download(filepath.to_str().unwrap(), &data);
-                            }
-                            PlotMode::PPV => {
-                                let mut data = String::new();
-                                {
-                                    data.push_str("path\tvoltage\tcount_rate\tcounts\teffective_time\n");
-                                }
-
-                                for (name, cache) in state_sorted.iter() {
-                                    if let PointState {
-                                        counts: Some(counts),
-                                        preprocess: Some(preprocess),
-                                        ..
-                                    } = cache
-                                    {
-                                        let effective_time = if processing_params.post_process.cut_bad_blocks {
-                                            preprocess.effective_time() as f32 * 1e-9
-                                        } else {
-                                            preprocess.acquisition_time as f32 * 1e-9
-                                        };
-
-                                        let count_rate = *counts as f32 / effective_time;
-
-                                        let point_name = {
-                                            let temp = PathBuf::from(name);
-                                            temp.file_name().unwrap().to_owned()
-                                        };
-
-                                        data.push_str(&format!(
-                                            "{point_name:?}\t{}\t{count_rate}\t{counts}\t{effective_time}\n",
-                                            preprocess.hv
-                                        ));
-                                    }
-                                }
-
-                                let mut filepath = save_folder;
-                                filepath.push("PPV.tsv");
-
-                                #[cfg(not(target_arch = "wasm32"))]
-                                {
-                                    let mut out_file = File::create(filepath).unwrap();
-                                    out_file.write_all(data.as_bytes()).unwrap();
-                                }
-                                #[cfg(target_arch = "wasm32")]
-                                download(filepath.to_str().unwrap(), &data);
-                            }
-                        }
-                    }
-                });
-            }
+            self.files_save_button(ui);
         });
 
         egui::containers::ScrollArea::new([false, true]).show(ui, |ui| {
@@ -368,10 +260,11 @@ impl DataViewerApp {
                     need_process: false,
                 };
 
-                file_tree_entry(
+                DataViewerApp::file_tree_entry(
                     ui,
                     root,
                     &self.select_single,
+                    &self.name_contains,
                     &mut self.state.lock(),
                     &mut state_after,
                 );
@@ -393,6 +286,307 @@ impl DataViewerApp {
                 }
             }
         });
+    }
+
+    /// Recursive file tree drawer with logic embedded
+    fn file_tree_entry(
+        ui: &mut egui::Ui,
+        entry: &mut FSRepr,
+        select_single: &bool,
+        name_contains: &str,
+        opened_files: &mut BTreeMap<String, PointState>,
+        state_after: &mut FileTreeState,
+    ) {
+        match entry {
+            FSRepr::File { path, .. } => {
+                let key = path.to_str().unwrap().to_string();
+                if name_contains.is_empty() || key.contains(name_contains) {
+                    let cache = opened_files.entry(key.clone()).or_insert(EMPTY_POINT);
+                    let mut change_set = None;
+                    let mut exclusive_point = None;
+
+                    ui.horizontal(|ui| {
+                        if ui.checkbox(&mut cache.opened, "").changed() {
+                            if cache.opened && *select_single {
+                                exclusive_point = Some(key)
+                            }
+
+                            if path.ends_with("meta") {
+                                change_set = Some(cache.opened)
+                            };
+                        }
+
+                        let filename = path.file_name().unwrap().to_str().unwrap();
+
+                        #[cfg(not(target_arch = "wasm32"))]
+                        ui.label(filename);
+                        #[cfg(target_arch = "wasm32")]
+                        {
+                            let hyperlink =
+                                HyperlinkNewWindow::new(filename, api_url("api/meta", path));
+                            ui.add(hyperlink);
+                        }
+                    });
+
+                    if let Some(point) = exclusive_point {
+                        for (key, cache) in opened_files.iter_mut() {
+                            if key != &point {
+                                cache.opened = false;
+                            }
+                        }
+                        state_after.need_process = true;
+                    } else if let Some(opened) = change_set {
+                        let parent_folder = path.parent().unwrap().to_str().unwrap();
+                        let filtered_keys = opened_files
+                            .keys()
+                            .filter(|key| key.contains(parent_folder))
+                            .cloned()
+                            .collect::<Vec<_>>();
+                        for key in filtered_keys {
+                            opened_files.get_mut(&key).unwrap().opened = opened;
+                        }
+                        state_after.need_process = true;
+                    }
+                }
+            }
+
+            FSRepr::Directory {
+                path,
+                children,
+                load_state,
+                ..
+            } => {
+                let header =
+                    egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
+                        .id_source(path.to_str().unwrap())
+                        .show(ui, |ui| {
+                            for child in children {
+                                DataViewerApp::file_tree_entry(
+                                    ui,
+                                    child,
+                                    select_single,
+                                    name_contains,
+                                    opened_files,
+                                    state_after,
+                                )
+                            }
+                        });
+
+                if header.fully_open() && load_state == &LoadState::NotLoaded {
+                    *load_state = LoadState::NeedLoad;
+                    state_after.need_load = true;
+                }
+            }
+        }
+    }
+
+    /// Isomorphic way to save currentry opened files in [PlotMode::PPV] mode
+    ///
+    /// Result will be saved in `PPV.tsv` file in a place according [DataViewerApp::save_text_file]
+    ///
+    /// # Arguments
+    /// * `save_folder` - Directory where the file should be saved (on wasm side can be any).
+    /// * `state_sorted` - A ref copy of [DataViewerApp::state] converted to vec (must be sorted for pretty results).
+    /// * `processing_params` - A ref copy of [ViewerState] to get processing parameters.
+    ///
+    fn files_save_ppv(
+        save_folder: &PathBuf,
+        state_sorted: &Vec<(&String, &PointState)>,
+        processing_params: &ViewerState,
+    ) {
+        let mut content = String::new();
+        {
+            content.push_str("path\tvoltage\tcount_rate\tcounts\teffective_time\n");
+        }
+
+        for (name, cache) in state_sorted.iter() {
+            if let PointState {
+                counts: Some(counts),
+                preprocess: Some(preprocess),
+                ..
+            } = cache
+            {
+                let effective_time = if processing_params.post_process.cut_bad_blocks {
+                    preprocess.effective_time() as f32 * 1e-9
+                } else {
+                    preprocess.acquisition_time as f32 * 1e-9
+                };
+
+                let count_rate = *counts as f32 / effective_time;
+
+                let point_name = {
+                    let temp = PathBuf::from(name);
+                    temp.file_name().unwrap().to_owned()
+                };
+
+                content.push_str(&format!(
+                    "{point_name:?}\t{}\t{count_rate}\t{counts}\t{effective_time}\n",
+                    preprocess.hv
+                ));
+            }
+        }
+
+        DataViewerApp::save_text_file(save_folder, "PPV", Some("tsv"), &content);
+    }
+
+    /// Isomorphic way to save currentry opened files in [PlotMode::PPT] mode
+    ///
+    /// Result will be saved in `PPT.tsv` file in a place according [DataViewerApp::save_text_file]
+    ///
+    /// # Arguments
+    /// * `save_folder` - Directory where the file should be saved (on wasm side can be any).
+    /// * `state_sorted` - A ref copy of [DataViewerApp::state] converted to vec (must be sorted for pretty results).
+    /// * `processing_params` - A ref copy of [ViewerState] to get processing parameters.
+    ///
+    fn files_save_ppt(
+        save_folder: &PathBuf,
+        state_sorted: &Vec<(&String, &PointState)>,
+        processing_params: &ViewerState,
+    ) {
+        let mut content = String::new();
+        {
+            content.push_str("path\ttime\ttime_raw\tcount_rate\tcounts\teffective_time\n");
+        }
+
+        for (name, cache) in state_sorted.iter() {
+            if let PointState {
+                counts: Some(counts),
+                preprocess: Some(preprocess),
+                ..
+            } = cache
+            {
+                let effective_time = if processing_params.post_process.cut_bad_blocks {
+                    preprocess.effective_time() as f32 * 1e-9
+                } else {
+                    preprocess.acquisition_time as f32 * 1e-9
+                };
+
+                let count_rate = *counts as f32 / effective_time;
+
+                let point_name = {
+                    let temp = PathBuf::from(name);
+                    temp.file_name().unwrap().to_owned()
+                };
+
+                let start_time = preprocess.start_time;
+
+                content.push_str(&format!(
+                    "{point_name:?}\t{start_time:?}\t{}\t{count_rate}\t{counts}\t{effective_time}\n",
+                    start_time.and_utc().timestamp()
+                ));
+            }
+        }
+
+        DataViewerApp::save_text_file(save_folder, "PPT", Some("tsv"), &content);
+    }
+
+    /// Isomorphic way to save currentry opened files in [PlotMode::Histogram] mode
+    ///
+    /// This function will save each opened (and processed) file in a separate tsv file
+    /// and a combined one in `merged.tsv`
+    ///
+    /// - For generated names see [DataViewerApp::save_text_file]
+    /// - For data structure see [PointHistogram::to_csv]
+    ///
+    /// # Arguments
+    /// * `save_folder` - Directory where the file should be saved (on wasm side can be any).
+    /// * `state` - A ref copy of [DataViewerApp::state] converted to vec.
+    ///
+    fn files_save_histograms(save_folder: &PathBuf, state: &Vec<(&String, &PointState)>) {
+        let opened_hists = state
+            .iter()
+            .filter_map(|(name, cache)| {
+                if let PointState {
+                    opened: true,
+                    histogram: Some(histogram),
+                    ..
+                } = cache
+                {
+                    Some((name, histogram))
+                } else {
+                    None
+                }
+            })
+            .collect::<Vec<_>>();
+
+        // Save each hist into separate file
+        for (name, histogram) in &opened_hists {
+            let data = histogram.to_csv('\t');
+            DataViewerApp::save_text_file(save_folder, name, Some("tsv"), &data);
+        }
+
+        // Save merged histogram
+        let merged_hist = PointHistogram::new_merged(
+            &opened_hists
+                .into_iter()
+                .map(|(_, hist)| hist)
+                .collect::<Vec<_>>(),
+        );
+        let merged_data = merged_hist.to_csv('\t');
+        DataViewerApp::save_text_file(save_folder, "merged", Some("tsv"), &merged_data);
+    }
+
+    /// Isomorphic text file save
+    ///
+    /// - Native: method will save file to `$save_folder/$name` via fs
+    /// - WASM: method will download file via browser
+    ///
+    /// Method will try to extract set name (parent folder) and run name (parent of parent folder).
+    /// On success filename will be like `{run_name}-{set_name}-{name}.{pref_ext}`. On failure it will use just `{name}`.
+    ///
+    /// # Arguments
+    ///
+    /// * `save_folder` - Directory where the file should be saved (on wasm side can be any).
+    /// * `name` - Desired filename (preferred without extension).
+    /// * `pref_ext` - Optional desired file extension (if None - nothing will be added).
+    /// * `content` - Text file content.
+    ///
+    fn save_text_file(save_folder: &PathBuf, name: &str, pref_ext: Option<&str>, content: &str) {
+        #[cfg(target_arch = "wasm32")]
+        let _ = save_folder;
+        #[cfg(target_arch = "wasm32")]
+        let save_folder = PathBuf::new(); // ensure correctness
+
+        let filename = {
+            let temp = PathBuf::from(name);
+
+            let mut name = temp.file_name().unwrap().to_str().unwrap().to_owned();
+            if let Some(pref_ext) = pref_ext {
+                if !name.ends_with(pref_ext) {
+                    name = format!("{name}.{pref_ext}");
+                }
+            }
+
+            let mut set = "".to_string();
+            let mut run = "".to_string();
+
+            if let Some(set_path) = temp.parent() {
+                if let Some(set_filename) = set_path.file_name() {
+                    if let Some(set_str) = set_filename.to_str() {
+                        set = set_str.to_string();
+                        if let Some(run_path) = set_path.parent() {
+                            if let Some(run_filename) = run_path.file_name() {
+                                if let Some(run_str) = run_filename.to_str() {
+                                    run = run_str.to_string();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            format!("{run}{set}{name}")
+        };
+
+        let mut filepath = save_folder.clone();
+        filepath.push(filename);
+
+        #[cfg(not(target_arch = "wasm32"))]
+        {
+            std::fs::write(filepath, content).unwrap();
+        }
+        #[cfg(target_arch = "wasm32")]
+        download(filepath.to_str().unwrap(), content);
     }
 
     pub fn process(&mut self) {
@@ -508,7 +702,7 @@ impl Default for DataViewerApp {
             #[cfg(target_arch = "wasm32")]
             root: Arc::new(std::sync::Mutex::new(None)),
             select_single: false,
-            glob_pattern: "*/Tritium_1/set_[123]/p*(HV1=14000)".to_owned(),
+            name_contains: "".to_string(),
             state,
             current_path: None,
             processing_status,
@@ -524,92 +718,6 @@ impl Default for DataViewerApp {
                     .map(|_| PointProcessor::spawner().spawn("./worker.js"))
                     .collect::<Vec<_>>()
             },
-        }
-    }
-}
-
-#[derive(Debug)]
-struct FileTreeState {
-    pub need_process: bool,
-    pub need_load: bool,
-}
-
-fn file_tree_entry(
-    ui: &mut egui::Ui,
-    entry: &mut FSRepr,
-    select_single: &bool,
-    opened_files: &mut BTreeMap<String, PointState>,
-    state_after: &mut FileTreeState,
-) {
-    match entry {
-        FSRepr::File { path, .. } => {
-            let key = path.to_str().unwrap().to_string();
-            let cache = opened_files.entry(key.clone()).or_insert(EMPTY_POINT);
-
-            let mut change_set = None;
-            let mut exclusive_point = None;
-
-            ui.horizontal(|ui| {
-                if ui.checkbox(&mut cache.opened, "").changed() {
-                    if cache.opened && *select_single {
-                        exclusive_point = Some(key)
-                    }
-
-                    if path.ends_with("meta") {
-                        change_set = Some(cache.opened)
-                    };
-                }
-
-                let filename = path.file_name().unwrap().to_str().unwrap();
-
-                #[cfg(not(target_arch = "wasm32"))]
-                ui.label(filename);
-                #[cfg(target_arch = "wasm32")]
-                {
-                    let hyperlink = HyperlinkNewWindow::new(filename, api_url("api/meta", path));
-                    ui.add(hyperlink);
-                }
-            });
-
-            if let Some(point) = exclusive_point {
-                for (key, cache) in opened_files.iter_mut() {
-                    if key != &point {
-                        cache.opened = false;
-                    }
-                }
-                state_after.need_process = true;
-            } else if let Some(opened) = change_set {
-                let parent_folder = path.parent().unwrap().to_str().unwrap();
-                let filtered_keys = opened_files
-                    .keys()
-                    .filter(|key| key.contains(parent_folder))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                for key in filtered_keys {
-                    opened_files.get_mut(&key).unwrap().opened = opened;
-                }
-                state_after.need_process = true;
-            }
-        }
-
-        FSRepr::Directory {
-            path,
-            children,
-            load_state,
-            ..
-        } => {
-            let header = egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
-                .id_source(path.to_str().unwrap())
-                .show(ui, |ui| {
-                    for child in children {
-                        file_tree_entry(ui, child, select_single, opened_files, state_after)
-                    }
-                });
-
-            if header.fully_open() && load_state == &LoadState::NotLoaded {
-                *load_state = LoadState::NeedLoad;
-                state_after.need_load = true;
-            }
         }
     }
 }
@@ -711,13 +819,17 @@ impl eframe::App for DataViewerApp {
                                 {
                                     if self.processing_params.post_process.cut_bad_blocks {
                                         Some([
-                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
-                                            *counts as f64 / (preprocess.effective_time() as f64 * 1e-9),
+                                            preprocess.start_time.and_utc().timestamp_millis()
+                                                as f64,
+                                            *counts as f64
+                                                / (preprocess.effective_time() as f64 * 1e-9),
                                         ])
                                     } else {
                                         Some([
-                                            preprocess.start_time.and_utc().timestamp_millis() as f64,
-                                            *counts as f64 / (preprocess.acquisition_time as f64 * 1e-9)
+                                            preprocess.start_time.and_utc().timestamp_millis()
+                                                as f64,
+                                            *counts as f64
+                                                / (preprocess.acquisition_time as f64 * 1e-9),
                                         ])
                                     }
                                 } else {
@@ -777,22 +889,25 @@ impl eframe::App for DataViewerApp {
                                         } = cache
                                         {
                                             // TODO: deduplicate this code
-                                            let point_pos =
-                                                if self.processing_params.post_process.cut_bad_blocks {
-                                                    PlotPoint::new(
-                                                        preprocess.hv,
-                                                        *counts as f64
-                                                            / preprocess.effective_time() as f64
-                                                            * 1e-9,
-                                                    )
-                                                } else {
-                                                    PlotPoint::new(
-                                                        preprocess.hv,
-                                                        *counts as f64
-                                                            / preprocess.acquisition_time as f64
-                                                            * 1e-9,
-                                                    )
-                                                };
+                                            let point_pos = if self
+                                                .processing_params
+                                                .post_process
+                                                .cut_bad_blocks
+                                            {
+                                                PlotPoint::new(
+                                                    preprocess.hv,
+                                                    *counts as f64
+                                                        / preprocess.effective_time() as f64
+                                                        * 1e-9,
+                                                )
+                                            } else {
+                                                PlotPoint::new(
+                                                    preprocess.hv,
+                                                    *counts as f64
+                                                        / preprocess.acquisition_time as f64
+                                                        * 1e-9,
+                                                )
+                                            };
 
                                             let distance =
                                                 point_pos.to_pos2().distance(pos.to_pos2());
@@ -875,7 +990,6 @@ impl eframe::App for DataViewerApp {
                         }
                     });
 
-
                 if filtered_viewer_button.clicked() {
                     let filepath = marked_point.unwrap();
 
@@ -888,7 +1002,10 @@ impl eframe::App for DataViewerApp {
                             .arg("--process")
                             .arg(serde_json::to_string(&self.processing_params.process).unwrap())
                             .arg("--postprocess")
-                            .arg(serde_json::to_string(&self.processing_params.post_process).unwrap());
+                            .arg(
+                                serde_json::to_string(&self.processing_params.post_process)
+                                    .unwrap(),
+                            );
 
                         if self.plot_mode == PlotMode::Histogram {
                             command
@@ -1026,13 +1143,15 @@ impl eframe::App for DataViewerApp {
                             .arg("--process")
                             .arg(serde_json::to_string(&self.processing_params.process).unwrap())
                             .arg("--postprocess")
-                            .arg(serde_json::to_string(&self.processing_params.post_process).unwrap())
+                            .arg(
+                                serde_json::to_string(&self.processing_params.post_process)
+                                    .unwrap(),
+                            )
                             .spawn()
                             .unwrap();
                     }
                     #[cfg(target_arch = "wasm32")]
                     {
-                        
                         let search = serde_qs::to_string(&ViewerMode::Bundles {
                             filepath: PathBuf::from(filepath),
                             process: self.processing_params.process.clone(),
