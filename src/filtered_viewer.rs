@@ -5,8 +5,8 @@ use egui_plot::{Legend, MarkerShape, PlotUi, Points, VLine};
 
 use processing::{
     postprocess::{post_process_frame, PostProcessParams},
-    preprocess::Preprocess,
-    process::{convert_to_kev, extract_waveforms, frame_to_events, ProcessParams},
+    preprocess::{Preprocess, extract_waveforms},
+    process::{convert_to_kev, frame_to_events, ProcessParams},
     storage::{load_meta, load_point},
     types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform},
     utils::{color_for_index, EguiLine},
