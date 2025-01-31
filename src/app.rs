@@ -232,11 +232,19 @@ impl DataViewerApp {
             }
         };
 
+        let mut needs_to_be_marked = false;
+
         ui.checkbox(&mut self.select_single, "select single");
 
         ui.horizontal(|ui| {
             ui.label("name contains:");
-            ui.text_edit_singleline(&mut self.name_contains);
+            ui.add_sized(
+                [100.0, 20.0],
+                egui::TextEdit::singleline(&mut self.name_contains),
+            );
+            needs_to_be_marked = ui.button("+").on_hover_text(
+                "Выделить все видимые файлы"
+            ).clicked();
         });
 
         ui.horizontal(|ui| {
@@ -265,6 +273,7 @@ impl DataViewerApp {
                     root,
                     &self.select_single,
                     &self.name_contains,
+                    needs_to_be_marked,
                     &mut self.state.lock(),
                     &mut state_after,
                 );
@@ -294,6 +303,7 @@ impl DataViewerApp {
         entry: &mut FSRepr,
         select_single: &bool,
         name_contains: &str,
+        needs_to_be_marked: bool,
         opened_files: &mut BTreeMap<String, PointState>,
         state_after: &mut FileTreeState,
     ) {
@@ -306,6 +316,11 @@ impl DataViewerApp {
                     let mut exclusive_point = None;
 
                     ui.horizontal(|ui| {
+
+                        if needs_to_be_marked {
+                            cache.opened = true;
+                        }
+
                         if ui.checkbox(&mut cache.opened, "").changed() {
                             if cache.opened && *select_single {
                                 exclusive_point = Some(key)
@@ -366,6 +381,7 @@ impl DataViewerApp {
                                     child,
                                     select_single,
                                     name_contains,
+                                    needs_to_be_marked,
                                     opened_files,
                                     state_after,
                                 )
