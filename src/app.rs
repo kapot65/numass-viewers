@@ -9,7 +9,12 @@ use eframe::{
 use egui_plot::{HLine, Legend, Plot, PlotPoint, Points, VLine};
 
 use processing::{
-    histogram::PointHistogram, preprocess::Preprocess, storage::LoadState, utils::construct_filename, viewer::{ToROOTOptions, ViewerState, EMPTY_POINT}, widgets::UserInput
+    histogram::PointHistogram,
+    preprocess::Preprocess,
+    storage::LoadState,
+    utils::construct_filename,
+    viewer::{ViewerState, EMPTY_POINT},
+    widgets::UserInput,
 };
 
 #[cfg(not(target_arch = "wasm32"))]
@@ -31,7 +36,7 @@ use {
     },
     processing::{
         storage::{api_url, FSRepr},
-        viewer::{PointState, ViewerMode},
+        viewer::{PointState, ToROOTOptions, ViewerMode},
     },
     wasm_bindgen::prelude::*,
     wasm_bindgen_futures::spawn_local as spawn,
@@ -221,12 +226,10 @@ impl DataViewerApp {
         if ui.button("save(root)").clicked() {
             let state = self.state.lock().clone();
 
-            #[cfg(target_arch = "wasm32")] {
+            #[cfg(target_arch = "wasm32")]
+            {
                 for (name, cache) in state.iter() {
-                    if let PointState {
-                        opened: true,
-                        ..
-                    } = cache {
+                    if let PointState { opened: true, .. } = cache {
                         let search = serde_qs::to_string(&ToROOTOptions {
                             filepath: PathBuf::from(name),
                             process: self.processing_params.process.clone(),
@@ -240,9 +243,9 @@ impl DataViewerApp {
                     }
                 }
             }
-            
 
-            #[cfg(not(target_arch = "wasm32"))] {
+            #[cfg(not(target_arch = "wasm32"))]
+            {
                 let processing_params = self.processing_params.clone();
 
                 spawn(async move {
@@ -251,37 +254,37 @@ impl DataViewerApp {
                         .pick_folder();
                     // #[cfg(target_arch = "wasm32")]
                     // let save_folder = Some(PathBuf::new());
-    
+
                     if let Some(save_folder) = save_folder {
                         let state_sorted = {
                             let mut state = state.iter().collect::<Vec<_>>();
                             state.sort_by(|(key_1, _), (key_2, _)| natord::compare(key_1, key_2));
                             state
                         };
-    
+
                         // let mut out_names = String::new();
-    
+
                         for (name, cache) in state_sorted.iter() {
-                            if let PointState {
-                                opened: true,
-                                ..
-                            } = cache {
+                            if let PointState { opened: true, .. } = cache {
                                 let out_name = construct_filename(name, Some("root"));
-    
+
                                 // if cache.opened {
                                 //     out_names += &format!("{}\n", out_name);
                                 // }
-    
+
                                 let mut command = tokio::process::Command::new("convert-to-root");
                                 command
                                     .arg(name)
                                     .arg("--process")
                                     .arg(serde_json::to_string(&processing_params.process).unwrap())
                                     .arg("--postprocess")
-                                    .arg(serde_json::to_string(&processing_params.post_process).unwrap())
+                                    .arg(
+                                        serde_json::to_string(&processing_params.post_process)
+                                            .unwrap(),
+                                    )
                                     .arg("--output")
                                     .arg(save_folder.join(PathBuf::from(out_name)));
-    
+
                                 command.spawn().unwrap();
                             }
                         }
