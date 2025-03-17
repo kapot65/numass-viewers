@@ -50,12 +50,10 @@ pub async fn process_point(
 ) -> Option<PointState> {
     let modified = processing::storage::load_modified_time(filepath.clone()).await; // TODO: remove clone
 
-    let events = processing::storage::process_point(&filepath, &process).await;
+    let events = processing::storage::process_point(&filepath, &process, Some(&post_process)).await;
 
     events.map(|(_, events)| {
         if let Some((events, preprocess)) = events {
-            let (events, preprocess) =
-                processing::postprocess::post_process((events, preprocess), &post_process);
 
             let histogram = events_to_histogram(events, histogram);
 
