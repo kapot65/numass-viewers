@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::{collections::BTreeMap, path::Path};
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -482,7 +482,7 @@ impl DataViewerApp {
     /// * `processing_params` - A ref copy of [ViewerState] to get processing parameters.
     ///
     fn files_save_ppv(
-        save_folder: &PathBuf,
+        save_folder: &Path,
         state_sorted: &Vec<(&String, &PointState)>,
         processing_params: &ViewerState,
     ) {
@@ -531,7 +531,7 @@ impl DataViewerApp {
     /// * `processing_params` - A ref copy of [ViewerState] to get processing parameters.
     ///
     fn files_save_ppt(
-        save_folder: &PathBuf,
+        save_folder: &Path,
         state_sorted: &Vec<(&String, &PointState)>,
         processing_params: &ViewerState,
     ) {
@@ -584,7 +584,7 @@ impl DataViewerApp {
     /// * `save_folder` - Directory where the file should be saved (on wasm side can be any).
     /// * `state` - A ref copy of [DataViewerApp::state] converted to vec.
     ///
-    fn files_save_histograms(save_folder: &PathBuf, state: &Vec<(&String, &PointState)>) {
+    fn files_save_histograms(save_folder: &Path, state: &Vec<(&String, &PointState)>) {
         let opened_hists = state
             .iter()
             .filter_map(|(name, cache)| {
@@ -633,7 +633,7 @@ impl DataViewerApp {
     /// * `pref_ext` - Optional desired file extension (if None - nothing will be added).
     /// * `content` - Text file content.
     ///
-    fn save_text_file(save_folder: &PathBuf, name: &str, pref_ext: Option<&str>, content: &str) {
+    fn save_text_file(save_folder: &Path, name: &str, pref_ext: Option<&str>, content: &str) {
         #[cfg(target_arch = "wasm32")]
         let _ = save_folder;
         #[cfg(target_arch = "wasm32")]
@@ -641,7 +641,7 @@ impl DataViewerApp {
 
         let filename = construct_filename(name, pref_ext);
 
-        let mut filepath = save_folder.clone();
+        let mut filepath = PathBuf::from(save_folder);
         filepath.push(filename);
 
         #[cfg(not(target_arch = "wasm32"))]
