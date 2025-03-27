@@ -8,7 +8,7 @@ use processing::{
     preprocess::{Preprocess, extract_waveforms},
     process::{convert_to_kev, frame_to_events, ProcessParams},
     storage::{load_meta, load_point},
-    types::{FrameEvent, NumassFrame, NumassWaveforms, ProcessedWaveform},
+    types::{FrameEvent, NumassFrameFast, NumassWaveformsFast, ProcessedWaveform},
     utils::{color_for_index, EguiLine},
 };
 
@@ -27,7 +27,7 @@ pub struct FilteredViewer<'a> {
     process: ProcessParams,
     postprocess: PostProcessParams,
     range: Range<f32>,
-    waveforms: NumassWaveforms<'a>,
+    waveforms: NumassWaveformsFast<'a>,
     preprocess: Preprocess,
     indexes: Option<Vec<u64>>,
     current: usize,
@@ -107,7 +107,7 @@ impl<'a> FilteredViewer<'a> {
         plot_ui: &mut PlotUi,
         indexes: &[u64],
         preprocess: &Preprocess,
-        waveforms: &BTreeMap<u64, NumassFrame<'a>>,
+        waveforms: &BTreeMap<u64, NumassFrameFast<'a>>,
     ) {
         let frame = {
             let current_time = indexes[current];
