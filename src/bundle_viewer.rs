@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, path::PathBuf, sync::Arc};
 
-use egui::mutex::Mutex;
+use egui::{mutex::Mutex, Visuals};
 use egui_plot::{Legend, Points};
 use processing::{
     numass::{protos::rsb_event, NumassMeta},
@@ -128,6 +128,8 @@ impl BundleViewer {
 impl eframe::App for BundleViewer {
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        ctx.set_visuals(Visuals::dark());
+
         if let Some(chunks) = &*self.chunks.lock() {
             ctx.input(|i| {
                 if i.key_pressed(eframe::egui::Key::ArrowRight)
@@ -209,7 +211,7 @@ impl eframe::App for BundleViewer {
 
                 egui_plot::Plot::new("waveforms")
                     .legend(Legend::default())
-                    .x_axis_formatter(|mark, _, _| format!("{:.3} ms", mark.value))
+                    .x_axis_formatter(|mark, _| format!("{:.3} ms", mark.value))
                     .show(ui, |plot_ui| {
                         let mut channel_points = BTreeMap::new();
 
@@ -222,10 +224,9 @@ impl eframe::App for BundleViewer {
 
                         for (ch_num, points) in channel_points {
                             plot_ui.points(
-                                Points::new(points)
+                                Points::new(format!("ch #{}", ch_num + 1), points)
                                     .color(color_for_index((ch_num) as usize))
                                     .radius(3.0)
-                                    .name(format!("ch #{}", ch_num + 1)),
                             )
                         }
                     });

@@ -53,12 +53,11 @@ async fn main() {
                 processing::postprocess::PostProcessParams::default()
             };
 
-            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(BundleViewer::init_with_point(
+            Ok(Box::new(BundleViewer::init_with_point(
                 filepath,
                 process,
                 postprocess,
-            ))
+            )))
         }),
     )
     .unwrap();

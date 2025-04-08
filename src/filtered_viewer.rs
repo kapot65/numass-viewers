@@ -1,6 +1,6 @@
 use std::{collections::BTreeMap, ops::Range, path::PathBuf, vec};
 
-use egui::Color32;
+use egui::{Color32, Visuals};
 use egui_plot::{Legend, MarkerShape, PlotUi, Points, VLine};
 
 use processing::{
@@ -104,7 +104,7 @@ impl<'a> FilteredViewer<'a> {
         current: usize,
         process: &ProcessParams,
         postprocess: &PostProcessParams,
-        plot_ui: &mut PlotUi,
+        plot_ui: &mut PlotUi<'_>,
         indexes: &[u64],
         preprocess: &Preprocess,
         waveforms: &BTreeMap<u64, NumassFrameFast<'a>>,
@@ -134,48 +134,41 @@ impl<'a> FilteredViewer<'a> {
                     let name = format!("ev#{idx} ch# {ch}");
 
                     plot_ui.vline(
-                        VLine::new((*pos as f64) / 8.0)
+                        VLine::new(name.clone(), (*pos as f64) / 8.0)
                             .color(color_for_index(*channel as usize))
-                            .name(name.clone()),
                     );
                     plot_ui.vline(
-                        VLine::new((*pos + *size * 8) as f64 / 8.0)
+                        VLine::new(name.clone(),(*pos + *size * 8) as f64 / 8.0)
                             .color(color_for_index(*channel as usize))
-                            .name(name.clone()),
                     );
                     plot_ui.points(
-                        Points::new(vec![[*pos as f64 / 8.0, *amplitude as f64]])
+                        Points::new(name, vec![[*pos as f64 / 8.0, *amplitude as f64]])
                             .color(color_for_index(*channel as usize))
                             .shape(MarkerShape::Diamond)
                             .filled(false)
                             .radius(10.0)
-                            .name(name),
                     );
                 }
                 FrameEvent::Reset { size } => {
                     plot_ui.vline(
-                        VLine::new(*pos as f64 / 8.0)
+                        VLine::new("RESET", *pos as f64 / 8.0)
                             .color(Color32::WHITE)
-                            .name("RESET"),
                     );
                     plot_ui.vline(
-                        VLine::new((*pos + *size * 8) as f64 / 8.0)
+                        VLine::new("RESET", (*pos + *size * 8) as f64 / 8.0)
                             .color(Color32::WHITE)
-                            .name("RESET"),
                     );
                 }
                 FrameEvent::Overflow { channel, size } => {
                     plot_ui.vline(
-                        VLine::new(*pos as f64 / 8.0)
+                        VLine::new(format!("OVERFLOW ch# {}", channel), *pos as f64 / 8.0)
                             .color(color_for_index(*channel as usize))
                             .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                            .name(format!("OVERFLOW ch# {}", channel)),
                     );
                     plot_ui.vline(
-                        VLine::new((*pos + *size * 8) as f64 / 8.0)
+                        VLine::new(format!("OVERFLOW ch# {}", channel),(*pos + *size * 8) as f64 / 8.0)
                             .color(color_for_index(*channel as usize))
                             .style(egui_plot::LineStyle::Dashed { length: 10.0 })
-                            .name(format!("OVERFLOW ch# {}", channel)),
                     );
                 }
                 FrameEvent::Frame { .. } => {}
@@ -226,6 +219,8 @@ impl<'a> FilteredViewer<'a> {
 impl eframe::App for FilteredViewer<'_> {
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &eframe::egui::Context, frame: &mut eframe::Frame) {
+        ctx.set_visuals(Visuals::dark());
+
         let indexes_len = self.indexes.as_ref().map(|indexes| indexes.len());
 
         ctx.input(|i| {
@@ -294,7 +289,7 @@ impl eframe::App for FilteredViewer<'_> {
             if let Some(indexes) = self.indexes.as_ref() {
                 egui_plot::Plot::new("waveforms")
                     .legend(Legend::default())
-                    .x_axis_formatter(|mark, _, _| format!("{:.3} μs", (mark.value * 8.0) / 1000.0))
+                    .x_axis_formatter(|mark, _| format!("{:.3} μs", (mark.value * 8.0) / 1000.0))
                     .show(ui, |plot_ui| {
                         if indexes.is_empty() {
                             return;

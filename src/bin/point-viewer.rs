@@ -34,8 +34,7 @@ async fn main() {
         std::fs::canonicalize(&filepath).unwrap().to_str().unwrap(),
         native_options,
         Box::new(|ctx| {
-            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(PointViewer::init_with_point(filepath))
+            Ok(Box::new(PointViewer::init_with_point(filepath)))
         }),
     )
     .unwrap();

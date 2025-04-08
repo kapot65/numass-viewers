@@ -43,12 +43,11 @@ async fn main() -> eframe::Result<()> {
         native_options,
         Box::new(|ctx| {
             install_image_loaders(&ctx.egui_ctx);
-            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
             let app = app::DataViewerApp::default();
             if let Some(directory) = opt.directory {
                 *app.root.try_lock().unwrap() = Some(FSRepr::new(directory))
             }
-            Box::new(app)
+            Ok(Box::new(app))
         }),
     )
 }
@@ -56,11 +55,23 @@ async fn main() -> eframe::Result<()> {
 // when compiling to web using trunk.
 #[cfg(target_arch = "wasm32")]
 fn main() {
-    use eframe::web_sys::window;
+    use eframe::web_sys::{self, window};
     use egui_extras::install_image_loaders;
     use processing::viewer::ViewerMode;
     use viewers::{bundle_viewer, filtered_viewer, point_viewer, trigger_viewer};
+    use wasm_bindgen::JsCast;
     use wasm_bindgen_futures::spawn_local;
+
+    fn get_canvas_element_by_id(canvas_id: &str) -> Option<web_sys::HtmlCanvasElement> {
+        let document = web_sys::window()?.document()?;
+        let canvas = document.get_element_by_id(canvas_id)?;
+        canvas.dyn_into::<web_sys::HtmlCanvasElement>().ok()
+    }
+
+    fn get_canvas_element_by_id_or_die(canvas_id: &str) -> web_sys::HtmlCanvasElement {
+        get_canvas_element_by_id(canvas_id)
+            .unwrap_or_else(|| panic!("Failed to find canvas with id {canvas_id:?}"))
+    }
 
     // Make sure panics are logged using `console.error`.
     console_error_panic_hook::set_once();
@@ -102,12 +113,11 @@ fn main() {
 
                 web_runner
                     .start(
-                        "the_canvas_id", // hardcode it
+                        get_canvas_element_by_id_or_die("the_canvas_id"), // hardcode it
                         web_options,
                         Box::new(move |ctx| {
                             install_image_loaders(&ctx.egui_ctx);
-                            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                            Box::new(app)
+                            Ok(Box::new(app))
                         }),
                     )
                     .await
@@ -121,12 +131,11 @@ fn main() {
             spawn_local(async move {
                 web_runner
                     .start(
-                        "the_canvas_id", // hardcode it
+                        get_canvas_element_by_id_or_die("the_canvas_id"), // hardcode it
                         web_options,
                         Box::new(|ctx| {
                             install_image_loaders(&ctx.egui_ctx);
-                            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                            Box::new(point_viewer::PointViewer::init_with_point(filepath))
+                            Ok(Box::new(point_viewer::PointViewer::init_with_point(filepath)))
                         }),
                     )
                     .await
@@ -146,12 +155,11 @@ fn main() {
             spawn_local(async move {
                 web_runner
                     .start(
-                        "the_canvas_id", // hardcode it
+                        get_canvas_element_by_id_or_die("the_canvas_id"), // hardcode it
                         web_options,
                         Box::new(|ctx| {
                             install_image_loaders(&ctx.egui_ctx);
-                            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                            Box::new(app)
+                            Ok(Box::new(app))
                         }),
                     )
                     .await
@@ -165,12 +173,11 @@ fn main() {
             spawn_local(async move {
                 web_runner
                     .start(
-                        "the_canvas_id", // hardcode it
+                        get_canvas_element_by_id_or_die("the_canvas_id"), // hardcode it
                         web_options,
                         Box::new(|ctx| {
                             install_image_loaders(&ctx.egui_ctx);
-                            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-                            Box::new(trigger_viewer::TriggerViewer::init_with_point(filepath))
+                            Ok(Box::new(trigger_viewer::TriggerViewer::init_with_point(filepath)))
                         }),
                     )
                     .await
@@ -180,15 +187,17 @@ fn main() {
 
         None => {
             spawn_local(async move {
+
+                
+
                 web_runner
                     .start(
-                        "the_canvas_id", // hardcode it
+                        get_canvas_element_by_id_or_die("the_canvas_id"), // hardcode it
                         web_options,
                         Box::new(|ctx| {
                             install_image_loaders(&ctx.egui_ctx);
-                            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
                             let app = app::DataViewerApp::default();
-                            Box::new(app)
+                            Ok(Box::new(app))
                         }),
                     )
                     .await

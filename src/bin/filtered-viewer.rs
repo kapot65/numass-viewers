@@ -61,8 +61,7 @@ async fn main() {
         native_options,
         Box::new(move |ctx| {
             install_image_loaders(&ctx.egui_ctx);
-            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(viewer)
+            Ok(Box::new(viewer))
         }),
     )
     .unwrap();

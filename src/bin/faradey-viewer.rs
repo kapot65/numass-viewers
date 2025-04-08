@@ -1,21 +1,23 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
-use std::collections::BTreeMap;
-use std::io::BufRead;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::SystemTime;
-
-use chrono::{DateTime, NaiveDateTime};
-use eframe::egui::{self, mutex::Mutex, Ui};
-use egui_plot::{Legend, Line, Plot, Points};
-
-use processing::numass::{self, ExternalMeta, NumassMeta, Reply};
-use processing::storage::load_meta;
-use processing::storage::LoadState;
-use serde::{Deserialize, Serialize};
 
 #[cfg(not(target_arch = "wasm32"))]
-use {processing::storage::FSRepr, tokio::spawn};
+use {
+    chrono::DateTime,
+    chrono::NaiveDateTime,
+    eframe::egui::{self, mutex::Mutex, Ui},
+    egui_plot::{Legend, Line, Plot, Points},
+    processing::numass::{self, ExternalMeta, NumassMeta, Reply},
+    processing::storage::load_meta,
+    processing::storage::FSRepr,
+    processing::storage::LoadState,
+    serde::{Deserialize, Serialize},
+    std::collections::BTreeMap,
+    std::io::BufRead,
+    std::path::PathBuf,
+    std::sync::Arc,
+    std::time::SystemTime,
+    tokio::spawn,
+};
 
 #[cfg(target_family = "unix")]
 use tikv_jemallocator::Jemalloc;
@@ -59,13 +61,13 @@ async fn main() {
         native_options,
         Box::new(move |ctx| {
             install_image_loaders(&ctx.egui_ctx);
-            ctx.egui_ctx.set_visuals(egui::Visuals::dark());
-            Box::new(app)
+            Ok(Box::new(app))
         }),
     )
     .unwrap();
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(PartialEq, Clone, Copy)]
 enum PlotMode {
     Lines,
@@ -73,12 +75,14 @@ enum PlotMode {
     Ppv,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug)]
 struct FileTreeState {
     pub need_process: bool,
     pub need_load: bool,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 struct FaradeyPointState {
     pub opened: bool,
@@ -89,6 +93,7 @@ struct FaradeyPointState {
     pub hv: Option<f64>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 const EMPTY_FARADEY_POINT: FaradeyPointState = FaradeyPointState {
     opened: false,
     modified: None,
@@ -99,6 +104,7 @@ const EMPTY_FARADEY_POINT: FaradeyPointState = FaradeyPointState {
 };
 
 // TODO: add error handling
+#[cfg(not(target_arch = "wasm32"))]
 async fn process_faradey_point(filepath: PathBuf) -> Option<FaradeyPointState> {
     let modified = processing::storage::load_modified_time(filepath.clone()).await; // TODO: remove clone
 
@@ -154,6 +160,7 @@ async fn process_faradey_point(filepath: PathBuf) -> Option<FaradeyPointState> {
     })
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 pub struct FaradeyViewerApp {
     pub root: Arc<tokio::sync::Mutex<Option<FSRepr>>>,
 
@@ -166,6 +173,7 @@ pub struct FaradeyViewerApp {
     state: Arc<Mutex<BTreeMap<String, FaradeyPointState>>>,
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl FaradeyViewerApp {
     /// files open button with logic embedded
     fn files_open_button(&mut self, ui: &mut Ui) {
@@ -351,7 +359,7 @@ impl FaradeyViewerApp {
             } => {
                 let header =
                     egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
-                        .id_source(path.to_str().unwrap())
+                        .id_salt(path.to_str().unwrap())
                         .show(ui, |ui| {
                             for child in children {
                                 FaradeyViewerApp::file_tree_entry(
@@ -411,6 +419,7 @@ impl FaradeyViewerApp {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl Default for FaradeyViewerApp {
     fn default() -> Self {
         let state = Arc::new(Mutex::new(BTreeMap::new()));
@@ -425,6 +434,7 @@ impl Default for FaradeyViewerApp {
     }
 }
 
+#[cfg(not(target_arch = "wasm32"))]
 impl eframe::App for FaradeyViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
@@ -475,15 +485,13 @@ impl eframe::App for FaradeyViewerApp {
                                     .map(|&t| (t - times_millis[0]) as f64 * 1e-3)
                                     .collect::<Vec<_>>();
 
-                                plot_ui.line(
-                                    Line::new(
-                                        x.iter()
-                                            .zip(values)
-                                            .map(|(&x, &y)| [x, y])
-                                            .collect::<Vec<_>>(),
-                                    )
-                                    .name(name),
-                                );
+                                plot_ui.line(Line::new(
+                                    name.to_owned(),
+                                    x.iter()
+                                        .zip(values)
+                                        .map(|(&x, &y)| [x, y])
+                                        .collect::<Vec<_>>(),
+                                ));
                             }
                         })
                     });
@@ -491,7 +499,7 @@ impl eframe::App for FaradeyViewerApp {
                 PlotMode::Ppt => {
                     let plot = Plot::new("Point/Time")
                         .legend(Legend::default())
-                        .x_axis_formatter(|mark, _, _| {
+                        .x_axis_formatter(|mark, _| {
                             chrono::DateTime::from_timestamp_millis(mark.value as i64)
                                 .unwrap()
                                 .to_string()
@@ -516,7 +524,7 @@ impl eframe::App for FaradeyViewerApp {
                             })
                             .collect::<Vec<_>>();
 
-                        plot_ui.points(Points::new(points).radius(3.0));
+                        plot_ui.points(Points::new("PPT", points).radius(3.0));
                     });
                 }
                 PlotMode::Ppv => {
@@ -542,7 +550,7 @@ impl eframe::App for FaradeyViewerApp {
                             })
                             .collect::<Vec<_>>();
 
-                        plot_ui.points(Points::new(points).radius(3.0));
+                        plot_ui.points(Points::new("PPV", points).radius(3.0));
                     });
                 }
             }

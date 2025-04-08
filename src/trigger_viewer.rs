@@ -1,6 +1,6 @@
 use std::{path::PathBuf, sync::Arc};
 
-use egui::{mutex::Mutex, Color32};
+use egui::{mutex::Mutex, Color32, Visuals};
 use egui_plot::{GridMark, Legend, VLine};
 use processing::{
     histogram::PointHistogram,
@@ -111,6 +111,8 @@ impl TriggerViewer {
 impl eframe::App for TriggerViewer {
     #[allow(unused_variables)]
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        ctx.set_visuals(Visuals::dark());
+
         egui::SidePanel::left("left").show(ctx, |ui| {
             ui.add(egui::Slider::new(&mut self.bin_size, 1..=1_000).text("bin size (ms)"));
             ui.checkbox(&mut self.per_channel, "show each channel");
@@ -153,7 +155,7 @@ impl eframe::App for TriggerViewer {
             egui::CentralPanel::default().show(ctx, |ui| {
                 egui_plot::Plot::new("triggers")
                     .legend(Legend::default())
-                    .x_axis_formatter(|GridMark { value, .. }, _, _| {
+                    .x_axis_formatter(|GridMark { value, .. }, _| {
                         format!("{:.3} s", value * 1e-9)
                     })
                     .show(ui, |plot_ui| {
@@ -168,14 +170,12 @@ impl eframe::App for TriggerViewer {
                         {
                             bad_blocks.iter().for_each(|idx| {
                                 plot_ui.vline(
-                                    VLine::new(CUTOFF_BIN_SIZE as f64 * (*idx as f64))
+                                    VLine::new("BAD", CUTOFF_BIN_SIZE as f64 * (*idx as f64))
                                         .color(Color32::WHITE)
-                                        .name("BAD"),
                                 );
                                 plot_ui.vline(
-                                    VLine::new(CUTOFF_BIN_SIZE as f64 * ((*idx + 1) as f64))
+                                    VLine::new("BAD",CUTOFF_BIN_SIZE as f64 * ((*idx + 1) as f64))
                                         .color(Color32::WHITE)
-                                        .name("BAD"),
                                 );
                             });
                         }

@@ -6,6 +6,7 @@ use eframe::{
     egui::{self, mutex::Mutex, Ui},
     epaint::Color32,
 };
+use egui::Visuals;
 use egui_plot::{HLine, Legend, Plot, PlotPoint, Points, VLine};
 
 use processing::{
@@ -28,7 +29,7 @@ use {
 
 #[cfg(target_arch = "wasm32")]
 use {
-    crate::{hyperlink::HyperlinkNewWindow, PointProcessor},
+    crate::PointProcessor,
     eframe::web_sys::window,
     gloo::{
         net::http::Request,
@@ -413,9 +414,7 @@ impl DataViewerApp {
                         ui.label(filename);
                         #[cfg(target_arch = "wasm32")]
                         {
-                            let hyperlink =
-                                HyperlinkNewWindow::new(filename, api_url("api/meta", path));
-                            ui.add(hyperlink);
+                            ui.hyperlink_to(filename, api_url("api/meta", path));
                         }
                     });
 
@@ -449,7 +448,7 @@ impl DataViewerApp {
             } => {
                 let header =
                     egui::CollapsingHeader::new(path.file_name().unwrap().to_str().unwrap())
-                        .id_source(path.to_str().unwrap())
+                        .id_salt(path.to_str().unwrap())
                         .show(ui, |ui| {
                             for child in children {
                                 DataViewerApp::file_tree_entry(
@@ -652,7 +651,7 @@ impl DataViewerApp {
         download(filepath.to_str().unwrap(), content);
     }
 
-    pub fn process(&mut self) {
+    fn process(&mut self) {
         let changed = self.processing_params.changed;
         self.processing_params.changed = false;
 
@@ -787,6 +786,8 @@ impl Default for DataViewerApp {
 
 impl eframe::App for DataViewerApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        ctx.set_visuals(Visuals::dark());
+        
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
 
         egui::SidePanel::left("left").show(ctx, |ui| {
@@ -863,7 +864,7 @@ impl eframe::App for DataViewerApp {
                 PlotMode::PPT => {
                     let plot = Plot::new("Point/Time")
                         .legend(Legend::default())
-                        .x_axis_formatter(|mark, _, _| {
+                        .x_axis_formatter(|mark, _| {
                             chrono::DateTime::from_timestamp_millis(mark.value as i64)
                                 .unwrap()
                                 .to_string()
@@ -901,7 +902,7 @@ impl eframe::App for DataViewerApp {
                             })
                             .collect::<Vec<_>>();
 
-                        plot_ui.points(Points::new(points).radius(3.0));
+                        plot_ui.points(Points::new("PPT", points).radius(3.0));
                     });
                 }
                 PlotMode::PPV => {
@@ -938,7 +939,7 @@ impl eframe::App for DataViewerApp {
                             })
                             .collect::<Vec<_>>();
 
-                        plot_ui.points(Points::new(points).radius(3.0));
+                        plot_ui.points(Points::new("PPV", points).radius(3.0));
 
                         if plot_ui.response().clicked() {
                             if let Some(pos) = plot_ui.pointer_coordinate() {
@@ -1015,10 +1016,10 @@ impl eframe::App for DataViewerApp {
                             } = state[current]
                             {
                                 plot_ui.hline(
-                                    HLine::new(counts as f64 / (acquisition_time as f64 * 1e-9))
+                                    HLine::new("selection", counts as f64 / (acquisition_time as f64 * 1e-9))
                                         .color(Color32::WHITE),
                                 );
-                                plot_ui.vline(VLine::new(hv).color(Color32::WHITE));
+                                plot_ui.vline(VLine::new("selection", hv).color(Color32::WHITE));
                             }
                         }
                     });
