@@ -17,7 +17,7 @@ rmp-serde = "1.1.1"
 
 tracing = "0.1.37"
 
-processing = { git = "https://bitbucket.org/Kapot/numass-processing.git", tag = "0.1.3", features = [
+processing = { git = "https://github.com/kapot65/numass-processing.git", features = [
     "egui",
 ] }
 
@@ -33,7 +33,7 @@ globset = "0.4.11"
 tracing-subscriber = "0.3"
 
 tokio = { version = "1.21.2", features = ["full"] }
-dataforge = { git = "https://bitbucket.org/Kapot/dataforge-parser-rust.git", tag = "0.1.3", features = [
+dataforge = { git = "https://github.com/kapot65/dataforge-parser-rust.git", features = [
     "tokio",
 ] }
 
@@ -51,7 +51,7 @@ tikv-jemallocator = "0.5.4"
 tracing-wasm = "0.2"
 console_error_panic_hook = "0.1.6"
 
-dataforge = { git = "https://bitbucket.org/Kapot/dataforge-parser-rust.git", tag = "0.1.3" }
+dataforge = { git = "https://github.com/kapot65/dataforge-parser-rust.git" }
 
 wasm-bindgen = "0.2.86"
 wasm-bindgen-futures = "0.4"
@@ -65,8 +65,8 @@ gloo = { version = "0.11.0", features = [
     "futures",
 ] }
 
-[patch."https://bitbucket.org/Kapot/dataforge-parser-rust.git"]
+[patch."https://github.com/kapot65/dataforge-parser-rust.git"]
 dataforge = { path = "../dataforge-parser-rust" }
 
-[patch."https://bitbucket.org/Kapot/numass-processing.git"]
+[patch."https://github.com/kapot65/numass-processing.git"]
 processing = { path = "../numass-processing" }
