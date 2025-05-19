@@ -320,7 +320,7 @@ impl FaradeyViewerApp {
                                 exclusive_point = Some(key)
                             }
 
-                            if path.ends_with("meta") {
+                            if path.ends_with("meta") || path.ends_with("meta.df") {
                                 change_set = Some(cache.opened)
                             };
                         }
